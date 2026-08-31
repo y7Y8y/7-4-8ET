@@ -1,0 +1,78 @@
+import type { League } from "./types";
+
+export const LEAGUES: Record<string, League & { fd?: number; af?: number; odds?: string }> = {
+  pl: {
+    id: "pl",
+    name: "Premier League",
+    country: "Angleterre",
+    crest: "https://media.api-sports.io/football/leagues/39.png",
+    fd: 2021,
+    af: 39,
+    odds: "soccer_epl",
+  },
+  laliga: {
+    id: "laliga",
+    name: "La Liga",
+    country: "Espagne",
+    crest: "https://media.api-sports.io/football/leagues/140.png",
+    fd: 2014,
+    af: 140,
+    odds: "soccer_spain_la_liga",
+  },
+  seriea: {
+    id: "seriea",
+    name: "Serie A",
+    country: "Italie",
+    crest: "https://media.api-sports.io/football/leagues/135.png",
+    fd: 2019,
+    af: 135,
+    odds: "soccer_italy_serie_a",
+  },
+  bundesliga: {
+    id: "bundesliga",
+    name: "Bundesliga",
+    country: "Allemagne",
+    crest: "https://media.api-sports.io/football/leagues/78.png",
+    fd: 2002,
+    af: 78,
+    odds: "soccer_germany_bundesliga",
+  },
+  ligue1: {
+    id: "ligue1",
+    name: "Ligue 1",
+    country: "France",
+    crest: "https://media.api-sports.io/football/leagues/61.png",
+    fd: 2015,
+    af: 61,
+    odds: "soccer_france_ligue_one",
+  },
+  ucl: {
+    id: "ucl",
+    name: "Ligue des Champions",
+    country: "Europe",
+    crest: "https://media.api-sports.io/football/leagues/2.png",
+    fd: 2001,
+    af: 2,
+    odds: "soccer_uefa_champs_league",
+  },
+  uel: {
+    id: "uel",
+    name: "Ligue Europa",
+    country: "Europe",
+    crest: "https://media.api-sports.io/football/leagues/3.png",
+    fd: 2146,
+    af: 3,
+    odds: "soccer_uefa_europa_league",
+  },
+  liga: {
+    id: "liga",
+    name: "Liga Portugal",
+    country: "Portugal",
+    crest: "https://media.api-sports.io/football/leagues/94.png",
+    fd: 2017,
+    af: 94,
+    odds: "soccer_portugal_primeira_liga",
+  },
+};
+
+export const TRACKED = ["pl", "ligue1", "laliga", "seriea", "bundesliga", "ucl", "liga"] as const;
