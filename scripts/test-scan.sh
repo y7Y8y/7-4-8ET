@@ -16,6 +16,13 @@ check() { # nom, attendu, obtenu
 
 jq_get() { node -e "const j=JSON.parse(require('fs').readFileSync('$1','utf8'));$2"; }
 
+# Fenêtre de référence des tests. « Aujourd'hui » n'a plus rien à offrir quand la
+# journée UTC se termine (buffer de 20 min) — dans ce cas on teste sur 3 jours.
+# Forçable : SCAN_DAYS=today bash scripts/test-scan.sh
+REMAIN_MIN=$(node -e "const d=new Date();const mid=Date.UTC(d.getUTCFullYear(),d.getUTCMonth(),d.getUTCDate())+86400000;console.log(Math.floor((mid-Date.now())/60000))")
+BASE_DAYS="${SCAN_DAYS:-$( [ "$REMAIN_MIN" -gt 75 ] && echo today || echo 3d )}"
+echo "── fenêtre de référence: $BASE_DAYS (il reste ${REMAIN_MIN} min dans la journée UTC)"
+
 echo "── 1. Accueil fusionné : paniers + bouton scanner + fenêtre de jours"
 CODE=$(curl -s -o /tmp/home.html -w "%{http_code}" --max-time 60 "$BASE/")
 check "GET /" 200 "$CODE"
@@ -50,7 +57,7 @@ check "proxy refuse hors LineFeed (SSRF)" 403 "$CODE"
 echo "── 3. POST /api/xbet/scan (serveur → feed → paniers)"
 CODE=$(curl -s -o /tmp/scan.json -w "%{http_code}" --max-time 90 -X POST "$BASE/api/xbet/scan" \
   -H "content-type: application/json" \
-  -d '{"oddMin":1.007,"oddMax":1.01,"bufferMin":20,"maxLegs":50,"maxPaniers":5,"days":"today"}')
+  -d "{\"oddMin\":1.007,\"oddMax\":1.01,\"bufferMin\":20,\"maxLegs\":50,\"maxPaniers\":5,\"days\":\"$BASE_DAYS\"}")
 check "POST scan" 200 "$CODE"
 jq_get /tmp/scan.json "console.log(j.ok)" | grep -q true && check "scan ok:true" yes yes || check "scan ok:true" yes no
 NLEGS=$(jq_get /tmp/scan.json "console.log((j.state?.paniers||[]).reduce((a,p)=>a+p.legs.length,0))")
@@ -66,19 +73,19 @@ PROD=$(jq_get /tmp/scan.json "console.log((j.state?.paniers||[]).every(p=>Math.a
 check "cote panier = produit des cotes" true "$PROD"
 ONEPER=$(jq_get /tmp/scan.json "const ids=(j.state?.paniers||[]).flatMap(p=>p.legs.map(l=>l.eventId));console.log(new Set(ids).size===ids.length)")
 check "un seul pick par match" true "$ONEPER"
-ECHO=$(jq_get /tmp/scan.json "console.log(j.params.oddMin===1.007&&j.params.oddMax===1.01&&j.strictBand===true&&j.window.days==='today')")
+ECHO=$(jq_get /tmp/scan.json "console.log(j.params.oddMin===1.007&&j.params.oddMax===1.01&&j.strictBand===true&&j.window.days==='$BASE_DAYS')")
 check "paramètres appliqués renvoyés (bande stricte + fenêtre)" true "$ECHO"
 
 echo "── 4. Bande STRICTE : aucun élargissement automatique"
 CODE=$(curl -s -o /tmp/narrow.json -w "%{http_code}" --max-time 90 -X POST "$BASE/api/xbet/scan" \
-  -H "content-type: application/json" -d '{"oddMin":1.009,"oddMax":1.0095,"days":"today"}')
+  -H "content-type: application/json" -d "{\"oddMin\":1.009,\"oddMax\":1.0095,\"days\":\"$BASE_DAYS\"}")
 NARROW_OK=$(jq_get /tmp/narrow.json "const ls=(j.state?.paniers||[]).flatMap(p=>p.legs);console.log(ls.length>0&&ls.every(l=>l.odd>=1.009-1e-9&&l.odd<=1.0095+1e-9))")
 check "bande resserrée (réglages) respectée à la cote près" true "$NARROW_OK"
 NPOOL=$(jq_get /tmp/narrow.json "console.log(j.scan?.pool ?? 0)")
 [ "$NPOOL" -lt "$POOL" ] && check "bande resserrée → moins de matchs ($NPOOL < $POOL), pas d'élargissement" yes yes \
   || check "bande resserrée → moins de matchs" yes "no($NPOOL/$POOL)"
 curl -s -o /tmp/impossible.json --max-time 90 -X POST "$BASE/api/xbet/scan" \
-  -H "content-type: application/json" -d '{"oddMin":1.0011,"oddMax":1.0012,"days":"today"}'
+  -H "content-type: application/json" -d "{\"oddMin\":1.0011,\"oddMax\":1.0012,\"days\":\"$BASE_DAYS\"}"
 IMP=$(jq_get /tmp/impossible.json "console.log(j.ok===false&&(j.scan?.pool??0)===0&&!(j.state&&j.state.paniers&&j.state.paniers.length))")
 check "bande introuvable → 0 jambe (jamais de repli 1,02)" true "$IMP"
 
@@ -113,14 +120,17 @@ RECOMPUTED=$(jq_get /tmp/afterpurge.json "console.log((j.state.paniers||[]).ever
 check "cote du panier recalculée sur les jambes restantes" true "$RECOMPUTED"
 
 echo "── 8. GET /api/xbet/scan + fenêtre de jours (Aujourd'hui / Demain / 3 j / 7 j / Tous)"
-CODE=$(curl -s -o /tmp/get1.json -w "%{http_code}" --max-time 90 "$BASE/api/xbet/scan?days=today")
-GOK=$(jq_get /tmp/get1.json "console.log(j.ok===true&&(j.scan?.pool??0)>0&&j.window.days==='today'&&j.params.oddMax===1.01)")
+CODE=$(curl -s -o /tmp/get1.json -w "%{http_code}" --max-time 90 "$BASE/api/xbet/scan?days=$BASE_DAYS")
+GOK=$(jq_get /tmp/get1.json "console.log(j.ok===true&&(j.scan?.pool??0)>0&&j.window.days==='$BASE_DAYS'&&j.params.oddMax===1.01)")
 [ "$CODE" = "200" ] && check "GET /api/xbet/scan (bande stricte par défaut)" true "$GOK" || check "GET /api/xbet/scan" true "http$CODE"
-TODAY_POOL=$(jq_get /tmp/get1.json "console.log(j.scan.pool)")
-IN_TODAY=$(jq_get /tmp/get1.json "
+BASE_POOL=$(jq_get /tmp/get1.json "console.log(j.scan.pool)")
+curl -s -o /tmp/get0.json --max-time 90 "$BASE/api/xbet/scan?days=today&dry=1"
+IN_TODAY=$(jq_get /tmp/get0.json "
 const d=new Date();const mid=Date.UTC(d.getUTCFullYear(),d.getUTCMonth(),d.getUTCDate());
-const ls=j.state.paniers.flatMap(p=>p.legs);
-console.log(ls.length>0&&ls.every(l=>{const t=Date.parse(l.kickoff);return t>Date.now()&&t<mid+86400000}))")
+const ls=(j.state?.paniers||[]).flatMap(p=>p.legs);
+const allToday=ls.every(l=>{const t=Date.parse(l.kickoff);return t>Date.now()&&t<mid+86400000});
+// en toute fin de journée UTC, 'aujourd'hui' peut légitimement être vide
+console.log(allToday&&(ls.length>0||$REMAIN_MIN<=75))")
 check "days=today → tout se joue aujourd'hui" true "$IN_TODAY"
 curl -s -o /tmp/get2.json --max-time 90 "$BASE/api/xbet/scan?days=tomorrow&dry=1"
 IN_TOM=$(jq_get /tmp/get2.json "
@@ -133,11 +143,11 @@ WIDE=$(jq_get /tmp/get3.json "
 const d=new Date();const mid=Date.UTC(d.getUTCFullYear(),d.getUTCMonth(),d.getUTCDate());
 const ls=(j.state?.paniers||[]).flatMap(p=>p.legs);
 const ok=ls.every(l=>{const t=Date.parse(l.kickoff);return t>Date.now()&&t<mid+7*86400000});
-console.log(ok&&j.scan.pool>$TODAY_POOL&&ls.some(l=>Date.parse(l.kickoff)>mid+86400000))")
-check "days=7d → couvre 7 jours et rapporte plus que today ($TODAY_POOL)" true "$WIDE"
+console.log(ok&&j.scan.pool>$BASE_POOL&&ls.some(l=>Date.parse(l.kickoff)>mid+86400000))")
+check "days=7d → couvre 7 jours et rapporte plus que « $BASE_DAYS » ($BASE_POOL)" true "$WIDE"
 DRY=$(jq_get /tmp/get3.json "console.log(j.saved===false&&j.scan.saved===false)")
 curl -s --max-time 15 "$BASE/api/xbet/paniers" -o /tmp/afterdry.json
-UNTOUCHED=$(jq_get /tmp/afterdry.json "const ls=(j.state.paniers||[]).flatMap(p=>p.legs);console.log(ls.length===$TODAY_POOL)")
+UNTOUCHED=$(jq_get /tmp/afterdry.json "const ls=(j.state.paniers||[]).flatMap(p=>p.legs);console.log(ls.length===$BASE_POOL)")
 [ "$DRY" = "true" ] && [ "$UNTOUCHED" = "true" ] && check "dry=1 : scanne sans écraser les paniers enregistrés" true true \
   || check "dry=1 : scanne sans écraser les paniers" true "no(saved=$DRY,paniers=$UNTOUCHED)"
 

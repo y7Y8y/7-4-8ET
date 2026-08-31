@@ -67,4 +67,6 @@ bash scripts/test-scan.sh http://127.0.0.1:3000   # 35/35 — accueil, proxy, sc
 bash scripts/test-day.sh  http://127.0.0.1:3000   # 40/40 — moteur journée (données, marchés, cache, pannes)
 ```
 
+`test-scan.sh` choisit sa fenêtre de référence tout seul : **aujourd'hui**, ou **3 jours** s'il reste moins de 75 min dans la journée UTC (sinon le buffer de 20 min ne laisse plus un seul match à venir). Forçable : `SCAN_DAYS=today bash scripts/test-scan.sh …`.
+
 Le mock sert deux fois exactement les mêmes cotes pour un même match : les contrôles de bande (1,0069 et 1,0101 sont posés en pièges juste à côté des bords) sont donc reproductibles.

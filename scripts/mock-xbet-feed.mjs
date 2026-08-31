@@ -132,9 +132,18 @@ for (const sp of SPORTS) {
       slot += 1;
       let kickoffMs;
       if (slot % 10 < 7) {
+        /**
+         * À VENIR : étalés sur ce qui reste de la journée, à la minute (pas en
+         * millisecondes — sinon tout se retrouve à la même minute et le buffer
+         * de 20 min les tue tous dès que le mock tourne depuis 5 minutes).
+         * Toujours au moins 35 min devant, pour que le scan ait de la matière
+         * même quand le mock est lancé tard dans la journée.
+         */
         const endOfDay = MIDNIGHT + 24 * 3600_000;
-        const span = Math.max(endOfDay - now0 - 30 * 60_000, 60 * 60_000);
-        kickoffMs = Math.min(now0 + 25 * 60_000 + ((slot * 53) % span), endOfDay - 5 * 60_000);
+        const last = endOfDay - 5 * 60_000; // jamais après minuit : la ligne du jour reste la ligne du jour
+        const first = Math.min(now0 + 35 * 60_000, last);
+        const roomMin = Math.max(Math.floor((last - first) / 60_000), 1);
+        kickoffMs = Math.min(first + ((slot * 37) % roomMin) * 60_000, last);
       } else {
         const past = Math.max(now0 - MIDNIGHT, 2 * 3600_000);
         kickoffMs = MIDNIGHT + ((slot * 61) % past);
