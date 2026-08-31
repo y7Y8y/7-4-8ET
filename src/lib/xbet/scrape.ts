@@ -1,5 +1,6 @@
 import { SPORT_IDS, feedHeaders, feedHosts, lineUrl } from "./hosts";
-import { isPrematch, legsFromEvent, onePerMatch, parseGame } from "./parse";
+import { dayRange, inRange, normalizeParams, type DayRange } from "./params";
+import { eventKickoff, filterBand, isPrematch, legsFromEvent, onePerMatch, parseGame } from "./parse";
 import { SCAN_DEFAULTS, type ScanParams, type XbetLeg } from "./types";
 
 export type Progress = (msg: string) => void;
@@ -13,6 +14,10 @@ export type ScrapeResult = {
   events: number;
   games: number;
   error: string | null;
+  /** paramètres réellement appliqués (bande jamais élargie) */
+  params: ScanParams;
+  /** fenêtre de jours appliquée */
+  window: { days: string; label: string; start: string; end: string | null };
 };
 
 /* ── Schéma du feed BetB2B (endpoints non verrouillés) ── */
@@ -147,13 +152,18 @@ export function leaguesFromTree(sports: SportNode[], maxLeagues = 45) {
  */
 export async function scrapeXbet(
   getJson: Getter,
-  params: ScanParams = SCAN_DEFAULTS,
+  rawParams: ScanParams = SCAN_DEFAULTS,
   onProgress: Progress = () => undefined,
-  opts: { hosts?: readonly string[]; maxLeagues?: number; maxGames?: number; concurrency?: number; budgetMs?: number } = {},
+  opts: { hosts?: readonly string[]; maxLeagues?: number; maxGames?: number; concurrency?: number; budgetMs?: number; now?: number } = {},
 ): Promise<ScrapeResult> {
+  const params = normalizeParams(rawParams);
+  const now = opts.now ?? Date.now();
+  const range = dayRange(params.days, now);
+  const win = describe(range);
   const need = params.maxPaniers * params.maxLegs;
   const maxLeagues = opts.maxLeagues ?? 45;
-  const maxGames = opts.maxGames ?? 140;
+  // Fenêtre large = plus de matchs à lire : on relève le plafond en conséquence.
+  const maxGames = opts.maxGames ?? (params.days === "today" || params.days === "tomorrow" ? 140 : 260);
   const concurrency = opts.concurrency ?? 6;
   const deadline = Date.now() + (opts.budgetMs ?? 45_000);
 
@@ -166,17 +176,18 @@ export async function scrapeXbet(
       events: 0,
       games: 0,
       error: "1xBet injoignable (1xbet.ci, 1xbet.com, linebet). Réessaie dans un instant.",
+      params,
+      window: win,
     };
   }
   const { host, sports } = picked;
   const leagues = leaguesFromTree(sports, maxLeagues);
-  onProgress(`Connecté · ${new URL(host).hostname} · ${leagues.length} ligues actives`);
+  onProgress(`Connecté · ${new URL(host).hostname} · ${leagues.length} ligues · ${win.label.toLowerCase()}`);
 
   /* 2. Matchs pré-match, ligue par ligue, dans le budget. */
   type Cand = { ev: EventZipLike; league: string; sport: string };
   const candidates: Cand[] = [];
   const seen = new Set<number>();
-  const now = Date.now();
   let leaguesDone = 0;
   let leagueStop = false;
 
@@ -197,6 +208,8 @@ export async function scrapeXbet(
         if (/^(à domicile|home)$/i.test(home) || /^(à l['’]extérieur|away)$/i.test(away)) continue;
         const ev = { ...g, L: g.L ?? g.LE ?? lg.name, SN: g.SN ?? g.SE ?? lg.sportName };
         if (!isPrematch(ev as never, params.bufferMin, now)) continue;
+        const ko = eventKickoff(ev as never);
+        if (!ko || !inRange(ko.getTime(), range)) continue; // hors fenêtre de jours
         seen.add(g.I);
         candidates.push({ ev, league: lg.name, sport: lg.sportName });
       }
@@ -215,7 +228,9 @@ export async function scrapeXbet(
       legs: [],
       events: 0,
       games: 0,
-      error: "Aucun match pas encore commencé pour l'instant. Réessaie plus tard.",
+      error: `Aucun match pas encore commencé sur la fenêtre « ${win.label} ». Change la fenêtre de jours ou réessaie plus tard.`,
+      params,
+      window: win,
     };
   }
 
@@ -249,7 +264,9 @@ export async function scrapeXbet(
     }
   });
 
-  const pool = onePerMatch(legs).slice(0, need);
+  // Double filet : bande stricte + fenêtre, même si un parseur s'est trompé.
+  const clean = filterBand(legs, params).filter((l) => inRange(Date.parse(l.kickoff), range));
+  const pool = onePerMatch(clean, params.oddMax).slice(0, need);
   return {
     ok: pool.length > 0,
     host,
@@ -258,6 +275,17 @@ export async function scrapeXbet(
     games,
     error: pool.length
       ? null
-      : `Aucune cote entre ${params.oddMin} et ${params.oddMax} sur les matchs encore ouverts.`,
+      : `Aucune cote entre ${params.oddMin} et ${params.oddMax} sur « ${win.label} ». La bande n'est jamais élargie automatiquement : change-la dans Réglages si tu veux plus de matchs.`,
+    params,
+    window: win,
+  };
+}
+
+function describe(range: DayRange) {
+  return {
+    days: range.days,
+    label: range.label,
+    start: new Date(range.start).toISOString(),
+    end: Number.isFinite(range.end) ? new Date(range.end).toISOString() : null,
   };
 }

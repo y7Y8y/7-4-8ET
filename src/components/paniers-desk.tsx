@@ -1,12 +1,22 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { ChevronDown, Copy, Radar, RefreshCw, Settings2, Trash2 } from "lucide-react";
+import { ChevronDown, Copy, Radar, RefreshCw, RotateCcw, Settings2, Trash2 } from "lucide-react";
 import { fmtKick, odds3 } from "@/lib/format";
-import { buildPaniers, couponText, purgeStarted } from "@/lib/xbet/pack";
+import { buildPaniers, couponText, purgeStartedDetailed } from "@/lib/xbet/pack";
 import { clientScrape } from "@/lib/xbet/client-scan";
+import { normalizeParams } from "@/lib/xbet/params";
 import { loadLocalState, loadParams, saveLocalState, saveParams } from "@/lib/xbet/local";
-import { SCAN_DEFAULTS, type Panier, type ScanParams, type XbetState } from "@/lib/xbet/types";
+import {
+  DAY_WINDOWS,
+  SCAN_DEFAULTS,
+  STRICT_BAND,
+  isStrictBand,
+  type DayWindow,
+  type Panier,
+  type ScanParams,
+  type XbetState,
+} from "@/lib/xbet/types";
 
 const empty: XbetState = {
   day: "",
@@ -27,6 +37,7 @@ export function PaniersDesk() {
   const [open, setOpen] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  const strict = isStrictBand(params);
 
   /** Recharge l'état + purge les matchs commencés. announce=true → message visible. */
   const refresh = useCallback(async (announce: boolean) => {
@@ -35,25 +46,20 @@ export function PaniersDesk() {
       const json = (await res.json()) as { state?: XbetState };
       if (json.state) {
         const merged = preferNewer(loadLocalState(), json.state);
-        const before = merged.paniers.length;
-        const cleaned = { ...merged, paniers: purgeStarted(merged.paniers) };
-        const removed = before - cleaned.paniers.length;
+        const report = purgeStartedDetailed(merged.paniers);
+        const cleaned = { ...merged, paniers: report.paniers };
         setState(cleaned);
         saveLocalState(cleaned);
-        if (announce) {
-          setNote(
-            removed > 0
-              ? `${removed} panier${removed > 1 ? "s" : ""} retiré${removed > 1 ? "s" : ""} — un match a commencé.`
-              : "À jour — aucun match commencé dans tes paniers.",
-          );
-        }
+        if (announce) setNote(purgeNote(report.legs, report.paniers_supprimes));
       }
     } catch {
       const local = loadLocalState();
       if (local) {
-        const cleaned = { ...local, paniers: purgeStarted(local.paniers) };
+        const report = purgeStartedDetailed(local.paniers);
+        const cleaned = { ...local, paniers: report.paniers };
         setState(cleaned);
         saveLocalState(cleaned);
+        if (announce) setNote(purgeNote(report.legs, report.paniers_supprimes));
       }
     }
   }, []);
@@ -70,9 +76,14 @@ export function PaniersDesk() {
   }, [state.paniers, open]);
 
   function patch(p: Partial<ScanParams>) {
-    const next = { ...params, ...p };
+    const next = normalizeParams({ ...params, ...p });
     setParams(next);
     saveParams(next);
+  }
+
+  /** Bande stricte 1,007–1,01 : jamais élargie toute seule, seulement ici. */
+  function resetBand() {
+    patch({ oddMin: STRICT_BAND.oddMin, oddMax: STRICT_BAND.oddMax });
   }
 
   /** Le scan : lit TOUS les marchés de chaque match pas encore commencé,
@@ -81,7 +92,7 @@ export function PaniersDesk() {
     setBusy(true);
     setError(null);
     setNote(null);
-    setMsg("Serveur → 1xbet.ci / 1xbet.com…");
+    setMsg(`Serveur → 1xbet.ci / 1xbet.com… · ${windowLabel(params.days)}`);
     try {
       const ctrl = new AbortController();
       const t = setTimeout(() => ctrl.abort(), 50_000);
@@ -187,6 +198,26 @@ export function PaniersDesk() {
           <Radar size={16} className={busy ? "animate-spin" : ""} />
           {busy ? "Scan en cours…" : "Scanner 1xBet"}
         </button>
+        <div>
+          <p className="mb-1.5 text-[10px] uppercase tracking-[0.2em] text-mist">Fenêtre de jours</p>
+          <div className="flex gap-1.5 overflow-x-auto pb-0.5">
+            {DAY_WINDOWS.map((w) => (
+              <button
+                key={w.id}
+                type="button"
+                disabled={busy}
+                onClick={() => patch({ days: w.id })}
+                className={`shrink-0 rounded-full border px-3 py-1.5 text-[11px] font-semibold transition disabled:opacity-50 ${
+                  params.days === w.id
+                    ? "border-lime bg-lime/15 text-lime"
+                    : "border-white/12 text-mist"
+                }`}
+              >
+                {w.label}
+              </button>
+            ))}
+          </div>
+        </div>
         <p className="text-center text-xs text-mist">{msg}</p>
         {error && (
           <p className="rounded-xl border border-live/30 bg-live/10 px-3 py-2 text-xs text-live">{error}</p>
@@ -199,7 +230,26 @@ export function PaniersDesk() {
           <Settings2 size={12} /> Réglages du scan
         </button>
         {showParams && (
-          <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-[11px] text-mist">
+                Bande{" "}
+                <span className={strict ? "text-lime" : "text-live"}>
+                  {odds3(params.oddMin)} – {odds3(params.oddMax)}
+                </span>
+                {strict ? " · stricte" : " · modifiée par toi"}
+              </p>
+              {!strict && (
+                <button
+                  type="button"
+                  onClick={resetBand}
+                  className="inline-flex items-center gap-1 rounded-full border border-lime/40 px-2.5 py-1 text-[10px] font-semibold text-lime"
+                >
+                  <RotateCcw size={11} /> Bande stricte
+                </button>
+              )}
+            </div>
+            <div className="grid grid-cols-2 gap-3">
             <label className="text-xs text-mist">
               Cote min
               <input
@@ -246,19 +296,32 @@ export function PaniersDesk() {
                 onChange={(e) => patch({ maxPaniers: Number(e.target.value) || 5 })}
               />
             </label>
+            </div>
+            <p className="text-[11px] leading-relaxed text-mist">
+              La bande n&apos;est <span className="text-paper">jamais élargie automatiquement</span> : s&apos;il
+              manque des matchs, le scan en trouve moins — il ne prend pas 1,02. Seules ces deux cases la
+              déplacent.
+            </p>
           </div>
         )}
         <p className="text-[11px] leading-relaxed text-mist">
           Lit tous les marchés de chaque match <span className="text-paper">pas encore commencé</span> (jamais
-          en live), garde la cote la plus proche de 1,01. 50 × 1,01 ≈ <span className="text-lime">1,64</span>.
+          en live) sur <span className="text-paper">{windowLabel(params.days).toLowerCase()}</span>, garde la
+          cote la plus proche de {odds3(params.oddMax)} dans la bande{" "}
+          <span className="text-lime">
+            {odds3(params.oddMin)} – {odds3(params.oddMax)}
+          </span>
+          . {params.maxLegs} × 1,01 ≈ <span className="text-lime">1,64</span>.
         </p>
       </div>
 
       {/* ── État + purge des matchs commencés ── */}
       <div className="flex items-center justify-between gap-3 rounded-2xl border border-white/8 bg-ink-800/40 px-4 py-3">
         <p className="text-xs text-mist">
-          <span className="text-paper">{state.paniers.length} / 5 paniers</span> · un match commence → son panier
-          saute
+          <span className="text-paper">
+            {state.paniers.length} / {params.maxPaniers} paniers
+          </span>{" "}
+          · un match commence → cette sélection saute, le reste du panier reste jouable
         </p>
         <button
           type="button"
@@ -341,6 +404,19 @@ export function PaniersDesk() {
       )}
     </div>
   );
+}
+
+function windowLabel(days: DayWindow) {
+  return DAY_WINDOWS.find((w) => w.id === days)?.label ?? "Aujourd'hui";
+}
+
+/** Message de purge : on parle en sélections, plus en paniers entiers. */
+function purgeNote(legs: number, dropped: number) {
+  if (!legs && !dropped) return "À jour — aucun match commencé dans tes paniers.";
+  const parts: string[] = [];
+  if (legs) parts.push(`${legs} sélection${legs > 1 ? "s" : ""} retirée${legs > 1 ? "s" : ""} (match commencé)`);
+  if (dropped) parts.push(`${dropped} panier${dropped > 1 ? "s" : ""} vidé${dropped > 1 ? "s" : ""}`);
+  return `${parts.join(" · ")} — le reste reste jouable, cote recalculée.`;
 }
 
 function preferNewer(local: XbetState | null, server: XbetState): XbetState {

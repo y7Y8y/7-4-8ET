@@ -14,7 +14,7 @@ import http from "node:http";
 
 const PORT = 8787;
 
-/* RNG seedée → tests reproductibles. */
+/* RNG seedée → structure (équipes, ligues) reproductible d'un run à l'autre. */
 let seed = 20260831;
 function rnd() {
   seed |= 0;
@@ -25,8 +25,27 @@ function rnd() {
 }
 const pick = (arr) => arr[Math.floor(rnd() * arr.length)];
 
+/**
+ * Cotes DÉTERMINISTES : dérivées de l'id du match (FNV-1a), jamais du RNG
+ * global. Deux appels GetGameZip sur le même match renvoient exactement les
+ * mêmes cotes, quel que soit l'ordre ou le nombre des requêtes — sans ça les
+ * tests de bande ne veulent rien dire.
+ */
+function hash32(str) {
+  let h = 2166136261;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+const pickFor = (arr, ...parts) => arr[hash32(parts.join(":")) % arr.length];
+
 const IN_BAND = [1.007, 1.008, 1.009, 1.01, 1.0075, 1.0085, 1.0095];
 const OUT_BAND = [1.02, 1.05, 1.18, 1.44, 1.9, 2.3, 1.03, 1.015, 1.66, 2.1];
+/** Pièges collés aux bords : un scan qui « élargit » un peu les attrape. */
+const EDGE_OVER = 1.0101; // juste au-dessus de 1,01
+const EDGE_UNDER = 1.0069; // juste en dessous de 1,007
 
 const TEAMS_FOOT = [
   "ASEC Mimosas", "Africa Sports", "Stade d'Abidjan", "Séwé Sport", "FC San Pedro",
@@ -150,13 +169,30 @@ for (let i = 0; i < 14; i++) {
   }
 }
 
+/* ── J+2 et J+5 : de quoi tester les fenêtres 3 jours / 7 jours ── */
+for (const [offset, count, tag] of [[2, 10, "J+2"], [5, 8, "J+5"]]) {
+  for (let i = 0; i < count; i++) {
+    const sp = SPORTS[i % 2];
+    const name = `${sp.leagues[i % sp.leagues.length]} (${tag})`;
+    const lg = leagues.find((l) => l.name === name) ?? addLeague(sp, name);
+    addEvent(lg, null, MIDNIGHT + offset * 86_400_000 + (10 + i) * 3600_000);
+  }
+}
+
 /* ── GetGameZip : tous les marchés, formes réelles (GE par id groupe, E imbriqués, CV string) ── */
 function gameZip(ev) {
   const { O1: home, O2: away, SE: sn } = ev;
   const football = sn === "Football";
   const rootE = football
-    ? [[{ T: 1, C: +pick(OUT_BAND).toFixed(3), CV: null, G: 1 }], [{ T: 2, C: +pick(OUT_BAND).toFixed(3), CV: null, G: 1 }], [{ T: 3, C: +pick(OUT_BAND).toFixed(3), CV: null, G: 1 }]]
-    : [[{ T: 401, C: +pick(OUT_BAND).toFixed(3), G: 1 }], [{ T: 402, C: +pick(OUT_BAND).toFixed(3), G: 1 }]];
+    ? [
+        [{ T: 1, C: pickFor(OUT_BAND, ev.I, "1"), CV: null, G: 1 }],
+        [{ T: 2, C: pickFor(OUT_BAND, ev.I, "X"), CV: null, G: 1 }],
+        [{ T: 3, C: pickFor(OUT_BAND, ev.I, "2"), CV: null, G: 1 }],
+      ]
+    : [
+        [{ T: 401, C: pickFor(OUT_BAND, ev.I, "W1"), G: 1 }],
+        [{ T: 402, C: pickFor(OUT_BAND, ev.I, "W2"), G: 1 }],
+      ];
 
   const GE = football
     ? [
@@ -165,7 +201,7 @@ function gameZip(ev) {
           G: 8,
           E: [
             [
-              { T: 4, C: pick(IN_BAND), CV: String(pick(IN_BAND)), G: 8 },
+              { T: 4, C: pickFor(IN_BAND, ev.I, "dc"), CV: String(pickFor(IN_BAND, ev.I, "dc")), G: 8 },
               { T: 5, C: 1.035, CV: "1.035", G: 8 },
               { T: 6, C: 1.045, CV: "1.045", G: 8 },
             ],
@@ -194,6 +230,9 @@ function gameZip(ev) {
             ],
             [
               { T: 8, P: -2, C: 1.28, CV: "1.28", G: 2, N: `${away} (-2)` },
+              // bords de bande : doivent rester DEHORS (1,0069 < 1,007 ; 1,0101 > 1,01)
+              { T: 7, P: 4, C: EDGE_OVER, CV: String(EDGE_OVER), G: 2, N: `${home} (+4)` },
+              { T: 8, P: -5, C: EDGE_UNDER, CV: String(EDGE_UNDER), G: 2, N: `${away} (-5)` },
             ],
           ],
         },
@@ -346,7 +385,13 @@ const server = http.createServer((req, res) => {
 
 server.listen(PORT, "127.0.0.1", () => {
   const today = [...eventById.values()].filter((e) => e.S && e.S * 1000 >= MIDNIGHT && e.S * 1000 < MIDNIGHT + 86_400_000).length;
+  const at = (n) =>
+    [...eventById.values()].filter(
+      (e) => e.S && e.S * 1000 >= MIDNIGHT + n * 86_400_000 && e.S * 1000 < MIDNIGHT + (n + 1) * 86_400_000,
+    ).length;
   console.log(
-    `mock 1xBet feed sur http://127.0.0.1:${PORT} · ${leagues.length} ligues · ${eventById.size} événements (${today} aujourd'hui) · Get1x2_VZip=406 · pannes GetGameZip: id%13`,
+    `mock 1xBet feed sur http://127.0.0.1:${PORT} · ${leagues.length} ligues · ${eventById.size} événements ` +
+      `(hier ${at(-1)} · auj. ${today} · demain ${at(1)} · J+2 ${at(2)} · J+5 ${at(5)}) · ` +
+      `cotes déterministes (hash de l'id) · Get1x2_VZip=406 · pannes GetGameZip: id%13`,
   );
 });

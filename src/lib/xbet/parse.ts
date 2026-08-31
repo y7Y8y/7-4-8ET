@@ -1,5 +1,5 @@
 import { marketLabel, pickLabel } from "./markets";
-import type { ScanParams, XbetLeg } from "./types";
+import { STRICT_BAND, type ScanParams, type XbetLeg } from "./types";
 
 type Coeff = { T: number; C: number; P?: number; CV?: string };
 export type EventZip = {
@@ -16,8 +16,17 @@ export type EventZip = {
   AE?: Array<{ ME?: Coeff[] }>;
 };
 
-function inBand(c: number, min: number, max: number) {
-  return c + 1e-9 >= min && c - 1e-9 <= max;
+/** Bande fermée [min, max] — strictement, à l'epsilon flottant près. */
+export function inBand(c: number, min: number, max: number) {
+  return Number.isFinite(c) && c + 1e-9 >= min && c - 1e-9 <= max;
+}
+
+/**
+ * Filet de sécurité : quoi qu'il arrive en amont, aucune jambe hors bande ne
+ * sort du moteur. La bande n'est jamais élargie automatiquement.
+ */
+export function filterBand(legs: XbetLeg[], p: { oddMin: number; oddMax: number }) {
+  return legs.filter((l) => inBand(l.odd, p.oddMin, p.oddMax));
 }
 
 /** Marchés que tu retrouves sur 1xBet sans code interne. */
@@ -90,17 +99,18 @@ export function legsFromEvent(ev: EventZip, host: string, p: ScanParams, now = D
   return legs;
 }
 
-function classicScore(leg: XbetLeg) {
-  const dist = Math.abs(leg.odd - 1.01);
+function classicScore(leg: XbetLeg, target: number) {
+  const dist = Math.abs(leg.odd - target);
   const classic = /^(1|X|2|1X|12|X2|Handicap|Plus de|Moins de|Total|Vainqueur)/.test(leg.market) ? 0 : 0.02;
   return dist + classic;
 }
 
-export function onePerMatch(legs: XbetLeg[]) {
+/** Une seule cote par match : la plus proche du haut de la bande (1,01 par défaut). */
+export function onePerMatch(legs: XbetLeg[], target: number = STRICT_BAND.oddMax) {
   const best = new Map<number, XbetLeg>();
   for (const l of legs) {
     const prev = best.get(l.eventId);
-    if (!prev || classicScore(l) < classicScore(prev)) best.set(l.eventId, l);
+    if (!prev || classicScore(l, target) < classicScore(prev, target)) best.set(l.eventId, l);
   }
   return [...best.values()].sort((a, b) => +new Date(a.kickoff) - +new Date(b.kickoff));
 }

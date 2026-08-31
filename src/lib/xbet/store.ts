@@ -2,7 +2,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { ymd } from "../format";
-import { purgeStarted } from "./pack";
+import { purgeStarted, purgeStartedDetailed } from "./pack";
 import type { Panier, XbetState } from "./types";
 
 /**
@@ -79,18 +79,22 @@ export async function saveState(state: XbetState) {
   await persist(state);
 }
 
-export async function liveState(): Promise<XbetState> {
+/** État courant + purge AU MATCH PRÈS (jambe commencée retirée, panier gardé). */
+export async function liveState(): Promise<{ state: XbetState; purge: { legs: number; paniers: number; reduits: number } }> {
   const state = await loadState();
   const today = ymd();
-  const kept = purgeStarted(state.paniers);
+  const report = purgeStartedDetailed(state.paniers);
   const next: XbetState = {
     ...state,
     day: today,
-    paniers: kept,
+    paniers: report.paniers,
     error: null,
   };
-  if (kept.length !== state.paniers.length) await saveState(next);
-  return next;
+  if (report.legs > 0 || report.paniers_supprimes > 0) await saveState(next);
+  return {
+    state: next,
+    purge: { legs: report.legs, paniers: report.paniers_supprimes, reduits: report.paniers_reduits },
+  };
 }
 
 export async function writePaniers(partial: {
@@ -112,7 +116,7 @@ export async function writePaniers(partial: {
 }
 
 export async function dropPanier(id: string) {
-  const state = await liveState();
+  const { state } = await liveState();
   state.paniers = state.paniers.filter((p) => p.id !== id);
   await saveState(state);
   return state;

@@ -1,6 +1,7 @@
 import { CLIENT_HOSTS, CORS_PROXIES, FEED_HEADERS, feedHeaders } from "./hosts";
-import { scrapeXbet, type Getter, type Progress } from "./scrape";
-import { SCAN_DEFAULTS, type ScanParams, type XbetLeg } from "./types";
+import { normalizeParams } from "./params";
+import { scrapeXbet, type Getter, type Progress, type ScrapeResult } from "./scrape";
+import { SCAN_DEFAULTS, type ScanParams } from "./types";
 
 async function readJson(res: Response) {
   const text = await res.text();
@@ -63,16 +64,10 @@ export async function browserGet(url: string): Promise<unknown> {
 }
 
 export async function clientScrape(
-  params: ScanParams = SCAN_DEFAULTS,
+  rawParams: ScanParams = SCAN_DEFAULTS,
   onProgress: Progress = () => undefined,
-): Promise<{
-  ok: boolean;
-  host: string | null;
-  legs: XbetLeg[];
-  events: number;
-  games: number;
-  error: string | null;
-}> {
+): Promise<ScrapeResult> {
+  const params = normalizeParams(rawParams);
   // Budget global côté téléphone : au-delà, chaque getter échoue immédiatement
   // pour finir proprement au lieu de faire attendre l'utilisateur des minutes.
   const deadline = Date.now() + 60_000;
@@ -82,7 +77,7 @@ export async function clientScrape(
   };
   return scrapeXbet(budgeted, params, onProgress, {
     hosts: CLIENT_HOSTS,
-    maxGames: 90,
+    maxGames: params.days === "today" || params.days === "tomorrow" ? 90 : 160,
     concurrency: 4,
     budgetMs: 60_000,
   });
