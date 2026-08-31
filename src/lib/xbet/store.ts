@@ -1,10 +1,35 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { ymd } from "../format";
 import { purgeStarted } from "./pack";
 import type { Panier, XbetState } from "./types";
 
-const FILE = path.join(process.cwd(), "data", "paniers.json");
+/**
+ * Sur Vercel le système de fichiers du déploiement est en lecture seule :
+ * on tente data/, puis /tmp, et en dernier recours on garde l'état en mémoire
+ * (le téléphone garde déjà sa copie dans localStorage, qui prime côté client).
+ */
+function stateFile(): string {
+  const dir = process.env.XBET_DATA_DIR ?? path.join(process.cwd(), "data");
+  return path.join(dir, "paniers.json");
+}
+
+let memState: XbetState | null = null;
+
+/**
+ * Garde-fou : un appel FS peut ne jamais revenir (NFS/procfs/FS gelé).
+ * On borne lecture et écriture dans le temps au lieu d'attendre indéfiniment.
+ */
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | null> {
+  return Promise.race([
+    p.then(
+      (v) => v,
+      () => null,
+    ),
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), ms)),
+  ]);
+}
 
 const empty = (): XbetState => ({
   day: ymd(),
@@ -16,18 +41,42 @@ const empty = (): XbetState => ({
 });
 
 export async function loadState(): Promise<XbetState> {
-  try {
-    const raw = await readFile(FILE, "utf8");
-    const parsed = JSON.parse(raw) as XbetState;
-    return { ...empty(), ...parsed, paniers: parsed.paniers ?? [] };
-  } catch {
-    return empty();
+  const candidates = [stateFile(), path.join(os.tmpdir(), "ninety-paniers.json")];
+  for (const file of candidates) {
+    const raw = await withTimeout(readFile(file, "utf8"), 2_000);
+    if (!raw) continue;
+    try {
+      const parsed = JSON.parse(raw) as XbetState;
+      memState = { ...empty(), ...parsed, paniers: parsed.paniers ?? [] };
+      return memState;
+    } catch {
+      /* fichier corrompu — candidate suivant */
+    }
   }
+  return memState ?? empty();
+}
+
+async function persist(state: XbetState): Promise<boolean> {
+  const json = JSON.stringify(state, null, 2);
+  const candidates = [stateFile(), path.join(os.tmpdir(), "ninety-paniers.json")];
+  for (const file of candidates) {
+    const ok = await withTimeout(
+      (async () => {
+        await mkdir(path.dirname(file), { recursive: true });
+        await writeFile(file, json, "utf8");
+        return true;
+      })(),
+      4_000,
+    );
+    if (ok) return true;
+  }
+  /* aucun support dispo : l'état reste en mémoire pour cette instance */
+  return false;
 }
 
 export async function saveState(state: XbetState) {
-  await mkdir(path.dirname(FILE), { recursive: true });
-  await writeFile(FILE, JSON.stringify(state, null, 2), "utf8");
+  memState = state;
+  await persist(state);
 }
 
 export async function liveState(): Promise<XbetState> {

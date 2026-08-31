@@ -30,8 +30,9 @@ export function ScanDesk() {
     setError(null);
     setMsg("Serveur → 1xbet.ci / 1xbet.com…");
     try {
+      // Le serveur a un budget interne de 40 s — on lui laisse 50 s avant d'abandonner.
       const ctrl = new AbortController();
-      const t = setTimeout(() => ctrl.abort(), 25000);
+      const t = setTimeout(() => ctrl.abort(), 50_000);
       const res = await fetch("/api/xbet/scan", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -39,17 +40,28 @@ export function ScanDesk() {
         signal: ctrl.signal,
       }).catch(() => null);
       clearTimeout(t);
-      const json = res ? ((await res.json().catch(() => null)) as { ok?: boolean; state?: XbetState; fallback?: boolean; error?: string } | null) : null;
-      if (json?.ok && json.state?.paniers.length) {
+      const json = res
+        ? ((await res.json().catch(() => null)) as {
+              ok?: boolean;
+              state?: XbetState;
+              fallback?: boolean;
+              error?: string;
+            } | null)
+        : null;
+      if (json?.ok && json.state?.paniers?.length) {
         saveLocalState(json.state);
         setMsg(`${json.state.paniers.length} paniers prêts.`);
         router.push("/");
         return;
       }
-      setMsg("Le serveur n'atteint pas 1xBet. Scan depuis le téléphone…");
-      const scan = await clientScrape(params, setMsg);
+      setMsg("Serveur bloqué par 1xBet. Scan depuis le téléphone…");
+      const scan = await clientScrape(params, (m) => setMsg(m));
       if (!scan.legs.length) {
-        setError(scan.error ?? json?.error ?? "Aucune cote 1,01.");
+        setError(
+          scan.error ??
+            json?.error ??
+            "Aucune cote 1,01 atteignable. Réessaie — 1xBet bloque parfois quelques minutes.",
+        );
         setBusy(false);
         return;
       }
