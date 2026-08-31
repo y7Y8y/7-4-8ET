@@ -76,6 +76,10 @@ body::before {
   animation: pulse-live 1.4s ease-in-out infinite;
 }
 
+.field {
+  @apply w-full rounded-xl border border-white/10 bg-ink-950 px-3 py-2 text-sm text-paper outline-none focus:border-lime;
+}
+
 @keyframes marquee {
   from {
     transform: translateX(0);

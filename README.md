@@ -87,6 +87,16 @@ Le seed n’est pas du lorem ipsum. Journée réelle :
 - Lecce–Roma, Osasuna–Getafe, Atalanta–Bologna
 - Ligue 1 et PL week-end (Man Utd 5-2 Ipswich, Chelsea 4-3 Brighton, City 1er, Hull 2e, PSG 12e à 2 pts…)
 
-## Ce que ce n’est pas
+## Combiné 1,01 (proprio unique)
 
-Un bookmaker. Pas de mise, pas de compte, pas de deep-link de pari. Un cockpit d’information.
+`/combine` — outil privé.
+
+- Uniquement **pré-match**, matchs **non commencés** (marge 20 min, paramétrable)
+- Filtre strict **1,007 ≤ cote ≤ 1,01** (1,01 pile compris)
+- Une sélection par match
+- Packer : cible **10**, secours **5**
+- `1.01^n = 10` ⇒ **n ≈ 232** jambes
+- The Odds API, bookmaker `onexbet`. Si le réseau est muet : pool démo tagué, pour valider l’algo
+- **Aucun pari n’est placé** sur 1xBet. Coupon texte + mise de génération (100 FCFA par défaut) à saisir à la main pour un code
+
+`GET /api/combine?demo=1`

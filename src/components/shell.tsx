@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import {
   Clapperboard,
   Gauge,
+  Layers,
   Radio,
   Sparkles,
   Ticket,
@@ -16,6 +17,7 @@ const NAV = [
   { href: "/live", label: "Live", icon: Radio },
   { href: "/matchs", label: "Matchs", icon: Ticket },
   { href: "/cotes", label: "Cotes", icon: Sparkles },
+  { href: "/combine", label: "Combiné", icon: Layers },
   { href: "/pronostics", label: "Pronostics", icon: Gauge },
   { href: "/championnats", label: "Championnats", icon: Trophy },
   { href: "/highlights", label: "Highlights", icon: Clapperboard },
