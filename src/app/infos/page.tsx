@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
 
 export default function InfosPage() {
   const [link, setLink] = useState("");
@@ -44,14 +43,25 @@ export default function InfosPage() {
           {link && <p className="mt-2 break-all text-[11px] text-mist/80">{link}</p>}
         </li>
         <li className="rounded-2xl border border-white/8 bg-ink-800/40 p-4">
-          <p className="text-paper">2. Scanner</p>
+          <p className="text-paper">2. Scanner (sur l&apos;accueil)</p>
           <p className="mt-1">
-            En bas, appuie <Link href="/scan" className="text-lime">Scanner</Link>, puis le bouton vert{" "}
-            <span className="text-paper">Lancer le scan</span>. Ça lit 1xBet (1xbet.ci). 1–2 min. Ensuite tu reviens sur Paniers.
+            Le bouton vert <span className="text-paper">Scanner 1xBet</span> est directement sur l&apos;accueil, en
+            haut. Le scan lit <span className="text-paper">tous les marchés</span> de chaque match{" "}
+            <span className="text-paper">pas encore commencé</span> (jamais en live), et en sort les cotes de la
+            bande choisie — la plus proche de 1,01 par match. Réglages (cote min/max, sélections, paniers) sous
+            « Réglages du scan ».
           </p>
         </li>
         <li className="rounded-2xl border border-white/8 bg-ink-800/40 p-4">
-          <p className="text-paper">3. Recopier sur 1xBet</p>
+          <p className="text-paper">3. Matchs commencés</p>
+          <p className="mt-1">
+            Un match commence → son panier saute tout seul à l&apos;ouverture de l&apos;app. Le bouton{" "}
+            <span className="text-paper">Actualiser</span> nettoie et recharge à la demande : que des matchs pas
+            encore commencés, toujours.
+          </p>
+        </li>
+        <li className="rounded-2xl border border-white/8 bg-ink-800/40 p-4">
+          <p className="text-paper">4. Recopier sur 1xBet</p>
           <p className="mt-1">Ouvre un panier : tu vois équipe vs équipe, le pari (Plus de 0,5 buts, Handicap +1…), la cote. Copier → colle dans 1xBet. Pas de login ici, pas de mise auto.</p>
         </li>
         <li className="rounded-2xl border border-white/8 bg-ink-800/40 p-4">

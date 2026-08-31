@@ -1,4 +1,4 @@
-import { FEED_HEADERS, FEED_HOSTS, SPORT_IDS, lineUrl } from "./hosts";
+import { SPORT_IDS, feedHeaders, feedHosts, lineUrl } from "./hosts";
 import { isPrematch, legsFromEvent, onePerMatch, parseEventList, parseGame } from "./parse";
 import { SCAN_DEFAULTS, type ScanParams, type XbetLeg } from "./types";
 
@@ -30,7 +30,7 @@ async function mapPool<T, R>(items: T[], n: number, fn: (item: T, i: number) => 
 
 export async function getJsonNative(url: string, timeoutMs = 12000): Promise<unknown> {
   const res = await fetch(url, {
-    headers: FEED_HEADERS,
+    headers: feedHeaders(new URL(url).origin),
     cache: "no-store",
     signal: AbortSignal.timeout(timeoutMs),
   });
@@ -38,8 +38,13 @@ export async function getJsonNative(url: string, timeoutMs = 12000): Promise<unk
   return res.json();
 }
 
-export async function pickHost(getJson: Getter, hosts: readonly string[] = FEED_HOSTS): Promise<string | null> {
+export async function pickHost(
+  getJson: Getter,
+  hosts: readonly string[] = feedHosts(),
+  deadline = Date.now() + 30_000,
+): Promise<string | null> {
   for (const host of hosts) {
+    if (Date.now() > deadline) break;
     try {
       const json = await getJson(
         lineUrl(host, "Get1x2_VZip", { sports: 1, count: 3, lng: "fr", mode: 4 }),
@@ -57,12 +62,13 @@ export async function scrapeXbet(
   getJson: Getter,
   params: ScanParams = SCAN_DEFAULTS,
   onProgress: Progress = () => undefined,
-  opts: { host?: string; hosts?: readonly string[]; maxGames?: number; concurrency?: number } = {},
+  opts: { host?: string; hosts?: readonly string[]; maxGames?: number; concurrency?: number; budgetMs?: number } = {},
 ): Promise<ScrapeResult> {
   const need = params.maxPaniers * params.maxLegs;
   const maxGames = opts.maxGames ?? 140;
   const concurrency = opts.concurrency ?? 6;
-  const host = opts.host ?? (await pickHost(getJson, opts.hosts ?? FEED_HOSTS));
+  const deadline = Date.now() + (opts.budgetMs ?? 45_000);
+  const host = opts.host ?? (await pickHost(getJson, opts.hosts ?? feedHosts(), deadline - 10_000));
   if (!host) {
     return {
       ok: false,
@@ -102,11 +108,16 @@ export async function scrapeXbet(
   onProgress(`${events.length} matchs pré-match · ${onePerMatch(fromList).length} déjà en bande`);
 
   const have = new Set(fromList.map((l) => l.eventId));
+  const seenIds = () => have.size;
   const todo = events.filter((e) => !have.has(e.I)).slice(0, maxGames);
   let games = 0;
+  let stopped = false;
 
   await mapPool(todo, concurrency, async (ev, i) => {
-    if (onePerMatch([...fromList, ...extra]).length >= need) return;
+    if (stopped || seenIds() >= need || Date.now() > deadline) {
+      stopped = true;
+      return;
+    }
     try {
       const json = await getJson(
         lineUrl(host, "GetGameZip", {
@@ -128,11 +139,13 @@ export async function scrapeXbet(
         S: parsed?.S ?? ev.S,
         SE: parsed?.SE ?? parsed?.SN ?? ev.SE ?? ev.SN,
       };
-      extra.push(...legsFromEvent(game, host, params, now));
+      const got = legsFromEvent(game, host, params, now);
+      if (got.length && !have.has(ev.I)) {
+        extra.push(...got);
+        have.add(ev.I);
+      }
       if (i % 8 === 0) {
-        onProgress(
-          `Marchés ${Math.min(i + 1, todo.length)}/${todo.length} · ${onePerMatch([...fromList, ...extra]).length} cotes 1,01`,
-        );
+        onProgress(`Marchés ${Math.min(i + 1, todo.length)}/${todo.length} · ${seenIds()} cotes 1,01`);
       }
     } catch {
       games += 1;

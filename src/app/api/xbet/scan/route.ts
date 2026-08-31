@@ -5,11 +5,14 @@ import { writePaniers } from "@/lib/xbet/store";
 import { SCAN_DEFAULTS, type ScanParams } from "@/lib/xbet/types";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 120;
+export const maxDuration = 60;
 
 export async function POST(req: Request) {
   const params = await readParams(req);
-  const scan = await scrapeXbet(getJsonNative, params);
+  // Budget interne : répondre AVANT le timeout client (50 s) et le plafond Vercel (60 s).
+  const scan = await scrapeXbet(getJsonNative, params, () => undefined, {
+    budgetMs: 40_000,
+  });
   if (!scan.ok) {
     return NextResponse.json({
       ok: false,
@@ -19,12 +22,25 @@ export async function POST(req: Request) {
     });
   }
   const paniers = buildPaniers(scan.legs, params);
-  const state = await writePaniers({
-    host: scan.host,
-    pool: scan.legs.length,
-    paniers,
-    error: null,
-  });
+  let state;
+  try {
+    state = await writePaniers({
+      host: scan.host,
+      pool: scan.legs.length,
+      paniers,
+      error: null,
+    });
+  } catch {
+    // FS indisponible : on renvoie quand même l'état — le téléphone le garde en localStorage.
+    state = {
+      day: new Date().toISOString().slice(0, 10),
+      scannedAt: new Date().toISOString(),
+      host: scan.host,
+      pool: scan.legs.length,
+      paniers,
+      error: null,
+    };
+  }
   return NextResponse.json({
     ok: true,
     fallback: false,
