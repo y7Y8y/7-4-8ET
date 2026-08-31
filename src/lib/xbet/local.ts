@@ -1,5 +1,6 @@
 import { ymd } from "../format";
 import { purgeStarted } from "./pack";
+import { normalizeParams } from "./params";
 import { SCAN_DEFAULTS, type ScanParams, type XbetState } from "./types";
 
 const STATE_KEY = "ninety.xbet.state";
@@ -32,7 +33,7 @@ export function loadParams(): ScanParams {
   try {
     const raw = localStorage.getItem(PARAMS_KEY);
     if (!raw) return SCAN_DEFAULTS;
-    return { ...SCAN_DEFAULTS, ...(JSON.parse(raw) as Partial<ScanParams>) };
+    return normalizeParams(JSON.parse(raw) as Partial<ScanParams>);
   } catch {
     return SCAN_DEFAULTS;
   }
