@@ -77,7 +77,7 @@ const ids=j.line.leagues.flatMap(l=>l.matches.map(m=>m.id));console.log(new Set(
 echo "── 4. Tous les marchés présents (groupes nommés, imbrication, codes inconnus, CV)"
 check "marchés groupés par nom (Double chance…)" true "$(node -e "$J
 const names=new Set(j.line.leagues.flatMap(l=>l.matches.flatMap(m=>m.markets.map(mk=>mk.name))));
-console.log(['Double chance','Total buts','Handicap','Score exact','Les deux équipes marquent'].every(n=>names.has(n)))" /tmp/day1.json)"
+console.log(['Double chance','Total buts','Handicap','Les deux équipes marquent'].every(n=>names.has(n)))" /tmp/day1.json)"
 check "sous-groupes ME parsés (MT/FT)" true "$(node -e "$J
 const names=new Set(j.line.leagues.flatMap(l=>l.matches.flatMap(m=>m.markets.map(mk=>mk.name))));
 console.log([...names].some(n=>/1 \\/ 1|Nul \\/ Nul/.test(n)))" /tmp/day1.json)"
@@ -88,11 +88,15 @@ check "cote CV string lue (Plus de 0,5)" true "$(node -e "$J
 const sels=j.line.leagues.flatMap(l=>l.matches.flatMap(m=>m.markets.flatMap(mk=>mk.selections)));
 console.log(sels.some(s=>/Plus de 0,5/.test(s.name)&&Math.abs(s.odd-1.085)<1e-9))" /tmp/day1.json)"
 
-echo "── 5. Résilience : GetGameZip en panne (id%13) → cotes de base, jamais de trou"
-check "matchs non enrichis présents avec base" true "$(node -e "$J
+echo "── 5. Résilience : GetGameZip en panne (id%13) → match gardé sans marchés, jamais de trou"
+check "matchs non enrichis présents (sans marchés)" true "$(node -e "$J
 const all=j.line.leagues.flatMap(l=>l.matches);
 const failed=all.filter(m=>m.id%13===0);
-console.log(failed.length>0 && failed.every(m=>!m.enriched&&m.marketCount>=1&&m.markets[0].selections.length>=2))" /tmp/day1.json)"
+console.log(failed.length>0 && failed.every(m=>!m.enriched&&m.marketCount===0))" /tmp/day1.json)"
+check "matchs enrichis avec tous leurs marchés" true "$(node -e "$J
+const all=j.line.leagues.flatMap(l=>l.matches);
+const ok=all.filter(m=>m.id%13!==0);
+console.log(ok.length>0 && ok.every(m=>m.enriched&&m.marketCount>=3))" /tmp/day1.json)"
 check "partial signalé" true "$(node -e "$J console.log(j.line.partial)" /tmp/day1.json)"
 
 echo "── 6. Filtre par jour (hier / demain)"

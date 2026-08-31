@@ -1,13 +1,13 @@
 /**
- * Mock du feed 1xBet (moteur BetB2B) — journée complète, pour tester :
- *  - le scan des paniers 1,01 (Get1x2_VZip + GetGameZip, gate 406 incluse)
- *  - la ligne du jour /api/xbet/day (toutes ligues, tous marchés)
+ * Mock du feed 1xBet (moteur BetB2B) — reproduit les endpoints NON verrouillés
+ * découverts sur le vrai feed (vérifiés 2026-08-31 sur 1xbet.ci) :
  *
- * Données : hier / aujourd'hui / demain, plusieurs sports, matchs commencés et
- * live (SC.CP), matchs pièges (Home/Away, sans heure), groupes de marchés nommés,
- * codes inconnus, cotes en CV string, structures imbriquées (ME), et pannes
- * aléatoires mais déterministes de GetGameZip (id % 13 === 0 → 500).
+ *   GetSportsZip?top=false            → arbre sports → ligues (LI, GC)     [ouvert]
+ *   GetChampZip?champ=<LI>&top=false  → matchs de la ligue (G[])           [ouvert, top=false obligatoire]
+ *   GetGameZip?id=<I>&isNewBuilder…   → tous les marchés (GE par id groupe)[ouvert, pannes id%13]
+ *   Get1x2_VZip                       → 406 NotAcceptable TOUJOURS (gate x-dt du service worker)
  *
+ * Kill switch de test : /__mode?down=1 → 503 partout.
  * Usage : node scripts/mock-xbet-feed.mjs   (écoute sur 127.0.0.1:8787)
  */
 import http from "node:http";
@@ -15,7 +15,7 @@ import http from "node:http";
 const PORT = 8787;
 
 /* RNG seedée → tests reproductibles. */
-let seed = 20240831;
+let seed = 20260831;
 function rnd() {
   seed |= 0;
   seed = (seed + 0x6d2b79f5) | 0;
@@ -45,25 +45,21 @@ const TEAMS_HOCKEY = ["CSKA Moscou", "SKA", "Dynamo Moscou", "Ak Bars", "Metallu
 const TEAMS_VOLLEY = ["Tours VB", "Montpellier", "Poitiers", "Chaumont", "Cannes"];
 const TEAMS_HAND = ["PSG Handball", "Montpellier HB", "Nantes", "Aix", "Chambery"];
 
-/* sport id 1xBet → (nom FR, ligues du jour, équipes) */
 const SPORTS = [
   { si: 1, sn: "Football", leagues: ["Ligue 1 CI", "Premier League", "LaLiga", "Serie A", "Bundesliga", "Ligue 1", "Championship", "Eredivisie", "Liga Portugal", "Süper Lig"], teams: TEAMS_FOOT, per: [6, 7, 7, 7, 6, 6, 6, 5, 5, 5] },
   { si: 3, sn: "Basketball", leagues: ["NBA", "Euroligue"], teams: TEAMS_BASKET, per: [6, 4] },
   { si: 4, sn: "Tennis", leagues: ["ATP Masters"], teams: TEAMS_TENNIS, per: [5] },
-  { si: 2, sn: "Hockey", leagues: ["KHL"], teams: TEAMS_HOCKEY, per: [4] },
+  { si: 2, sn: "Hockey sur glace", leagues: ["KHL"], teams: TEAMS_HOCKEY, per: [4] },
   { si: 6, sn: "Volleyball", leagues: ["Ligue A"], teams: TEAMS_VOLLEY, per: [3] },
   { si: 8, sn: "Handball", leagues: ["StarLigue"], teams: TEAMS_HAND, per: [3] },
 ];
 
 const day0 = new Date();
-const MIDNIGHT = Date.UTC(
-  day0.getUTCFullYear(),
-  day0.getUTCMonth(),
-  day0.getUTCDate(),
-);
+const MIDNIGHT = Date.UTC(day0.getUTCFullYear(), day0.getUTCMonth(), day0.getUTCDate());
 
 let nextId = 1_000_000;
-const events = [];
+let nextLI = 100_000;
+const leagues = []; // { li, name, sportId, sportName, events: [] }
 
 function twoTeams(pool) {
   const a = pick(pool);
@@ -72,69 +68,46 @@ function twoTeams(pool) {
   return [a, b];
 }
 
-function baseE(sn, home, away) {
-  if (sn === "Football") {
-    const e = [
-      { T: 1, C: pick(OUT_BAND), P: null, N: home },
-      { T: 2, C: pick(OUT_BAND), P: null, N: "Nul" },
-      { T: 3, C: pick(OUT_BAND), P: null, N: away },
-    ];
-    if (rnd() < 0.08) e.push({ T: 4, C: pick(IN_BAND), P: null, N: `${home} ou Nul` });
-    return e;
-  }
-  if (sn === "Tennis") {
-    return [
-      { T: 401, C: pick(OUT_BAND), P: null, N: home },
-      { T: 402, C: pick(OUT_BAND), P: null, N: away },
-    ];
-  }
-  return [
-    { T: 1, C: pick(OUT_BAND), P: null, N: home },
-    { T: 2, C: pick(OUT_BAND), P: null, N: "Nul" },
-    { T: 3, C: pick(OUT_BAND), P: null, N: away },
-  ];
+function addLeague(sport, name) {
+  const li = nextLI++;
+  const lg = { li, name, sportId: sport.si, sportName: sport.sn, events: [] };
+  leagues.push(lg);
+  return lg;
 }
 
-function addEvent({ si, sn, league, teams, kickoffMs, decoy = "none" }) {
+function addEvent(lg, teams, kickoffMs, decoy = "none") {
   const id = nextId++;
-  const [home, away] = teams ?? twoTeams(SPORTS.find((s) => s.si === si).teams);
+  const [home, away] = teams ?? twoTeams(SPORTS.find((s) => s.si === lg.sportId).teams);
   const ev = {
     I: id,
-    SI: si,
-    SN: sn,
-    L: league,
+    LI: lg.li,
+    SI: lg.sportId,
+    SE: lg.sportName,
+    LE: lg.name,
     O1: decoy === "placeholder" ? "Home" : home,
     O2: decoy === "placeholder" ? "Away" : away,
     S: decoy === "nokickoff" ? undefined : Math.floor(kickoffMs / 1000),
-    E: baseE(sn, home, away),
+    MIS: [{ K: 1, V: "Journée 3" }, { K: 2, V: "Stade de test" }],
   };
   if (decoy === "nokickoff") delete ev.S;
-  const now = Date.now();
-  if (kickoffMs < now && now - kickoffMs < 3 * 3600_000) {
-    ev.SC = { CP: `${Math.floor(rnd() * 3)}:${Math.floor(rnd() * 3)}` }; // live
-  }
-  events.push(ev);
+  lg.events.push(ev);
   return ev;
 }
 
-/* ── Hier : 8 matchs (tous passés) ── */
+/* ── Hier : 8 matchs ── */
 for (let i = 0; i < 8; i++) {
   const sp = SPORTS[i % 2 === 0 ? 0 : 1];
-  addEvent({
-    si: sp.si,
-    sn: sp.sn,
-    league: sp.leagues[i % sp.leagues.length],
-    kickoffMs: MIDNIGHT - 8 * 3600_000 + i * 45 * 60_000,
-  });
+  const name = sp.leagues[i % sp.leagues.length];
+  let lg = leagues.find((l) => l.sportId === sp.si && l.name === name) ?? addLeague(sp, name);
+  addEvent(lg, null, MIDNIGHT - 8 * 3600_000 + i * 45 * 60_000);
 }
 
-/* ── Aujourd'hui : toutes les ligues, heures étalées sur la journée ──
-   70 % à venir (le scan paniers a toujours de quoi travailler, quelle que soit
-   l'heure du test), 30 % déjà commencés/live (la journée les montre aussi). */
+/* ── Aujourd'hui : toutes les ligues (70 % à venir, 30 % commencés/live) ── */
 let slot = 0;
 const now0 = Date.now();
 for (const sp of SPORTS) {
-  sp.leagues.forEach((league, li) => {
+  sp.leagues.forEach((name, li) => {
+    const lg = addLeague(sp, name);
     const n = sp.per[li];
     for (let k = 0; k < n; k++) {
       slot += 1;
@@ -147,194 +120,233 @@ for (const sp of SPORTS) {
         const past = Math.max(now0 - MIDNIGHT, 2 * 3600_000);
         kickoffMs = MIDNIGHT + ((slot * 61) % past);
       }
-      addEvent({ si: sp.si, sn: sp.sn, league, kickoffMs });
+      addEvent(lg, null, kickoffMs);
     }
   });
 }
-/* pièges : Home/Away (exclus), sans heure (exclus) */
-addEvent({ si: 1, sn: "Football", league: "Ligue 1 CI", kickoffMs: MIDNIGHT + 21 * 3600_000, decoy: "placeholder" });
-addEvent({ si: 1, sn: "Football", league: "Ligue 1 CI", kickoffMs: MIDNIGHT + 22 * 3600_000, decoy: "nokickoff" });
+/* pièges : Home/Away et sans heure (jamais dans la ligne) */
+{
+  const lg = leagues.find((l) => l.name === "Ligue 1 CI");
+  addEvent(lg, null, MIDNIGHT + 21 * 3600_000, "placeholder");
+  addEvent(lg, null, MIDNIGHT + 22 * 3600_000, "nokickoff");
+}
+/* doublons « Matchs alternatifs » : mêmes ids, exclus par leaguesFromTree */
+for (const name of ["Premier League", "Ligue 1"]) {
+  const src = leagues.find((l) => l.name === name);
+  const alt = addLeague(SPORTS[0], `${name}. Matchs alternatifs`);
+  alt.events = src.events.slice(0, 3).map((e) => ({ ...e, LE: alt.name }));
+}
 
 /* ── Demain : 14 matchs ── */
 for (let i = 0; i < 14; i++) {
   const sp = SPORTS[i % 3];
-  addEvent({
-    si: sp.si,
-    sn: sp.sn,
-    league: sp.leagues[i % sp.leagues.length],
-    kickoffMs: MIDNIGHT + 24 * 3600_000 + 6 * 3600_000 + i * 55 * 60_000,
-  });
-}
-
-const byId = new Map(events.map((e) => [e.I, e]));
-
-/** Tous les marchés d'un match — groupes nommés, codes connus/inconnus, CV string, imbrication ME. */
-function gameZip(ev) {
-  const { O1: home, O2: away, SN: sn } = ev;
-  const root = {
-    I: ev.I,
-    O1: home,
-    O2: away,
-    L: ev.L,
-    SN: sn,
-    S: ev.S,
-    E: ev.E,
-  };
-
-  if (sn !== "Football") {
-    root.GE = [
-      { G: "Résultat du match", E: ev.E },
-      {
-        G: "Total points",
-        E: [
-          { T: 9, P: 210.5, C: 1.87, N: "Plus de 210,5" },
-          { T: 10, P: 210.5, C: 1.93, N: "Moins de 210,5" },
-        ],
-      },
-      {
-        G: "Handicap",
-        E: [
-          { T: 7, P: 4.5, C: 1.72, N: `${home} (+4,5)` },
-          { T: 8, P: -4.5, C: 2.12, N: `${away} (-4,5)` },
-        ],
-      },
-    ];
-    return { Value: root };
+  const name = sp.leagues[i % sp.leagues.length];
+  let lg = leagues.find((l) => l.sportId === sp.si && l.name === name && l.events[0] && l.events[0].S * 1000 >= MIDNIGHT + 86_400_000);
+  if (!lg) {
+    lg = addLeague(sp, `${name} (suite)`);
+    addEvent(lg, null, MIDNIGHT + 30 * 3600_000 + i * 55 * 60_000);
+  } else {
+    addEvent(lg, null, MIDNIGHT + 30 * 3600_000 + i * 55 * 60_000);
   }
-
-  const doubleChance = [
-    { T: 4, C: rnd() < 0.55 ? pick(IN_BAND) : 1.03, P: null, N: `${home} ou Nul` },
-    { T: 5, C: 1.035, P: null, N: `${home} ou ${away}` },
-    { T: 6, C: 1.045, P: null, N: `Nul ou ${away}` },
-  ];
-
-  root.GE = [
-    { G: "Double chance", E: doubleChance },
-    {
-      G: "Total buts",
-      E: [
-        { T: 9, P: 0.5, C: 0, CV: "1.085", N: "Plus de 0,5 but" },
-        { T: 10, P: 0.5, C: 1.12, N: "Moins de 0,5 but" },
-        { T: 9, P: 1.5, C: 1.36, N: "Plus de 1,5 buts" },
-        { T: 10, P: 1.5, C: 1.25, N: "Moins de 1,5 buts" },
-        { T: 9, P: 2.5, C: 1.85, N: "Plus de 2,5 buts" },
-        { T: 10, P: 2.5, C: 2.02, N: "Moins de 2,5 buts" },
-      ],
-    },
-    {
-      G: "Handicap",
-      E: [
-        { T: 7, P: 1, C: 1.22, N: `${home} (+1)` },
-        { T: 8, P: 1, C: 1.65, N: `${away} (-1)` },
-        { T: 7, P: 2, C: 1.06, N: `${home} (+2)` },
-        { T: 8, P: 2, C: 1.28, N: `${away} (-2)` },
-      ],
-    },
-    {
-      G: "Les deux équipes marquent",
-      E: [
-        { T: 180, C: 1.75, N: "Oui" },
-        { T: 181, C: 2.05, N: "Non" },
-      ],
-    },
-    {
-      G: "Score exact",
-      E: [
-        { T: 46, P: 101, C: 6.5, N: "1:0" },
-        { T: 46, P: 102, C: 8.0, N: "2:0" },
-        { T: 46, P: 103, C: 5.2, N: "1:1" },
-        { T: 46, P: 104, C: 9.5, N: "2:1" },
-        { T: 46, P: 105, C: 11.0, N: "0:0" },
-      ],
-    },
-    {
-      G: "Mi-temps / fin de match",
-      ME: [
-        { G: "1 / 1", E: [{ T: 850, C: 3.2, N: `${home} / ${home}` }] },
-        { G: "1 / Nul", E: [{ T: 851, C: 8.5, N: `${home} / Nul` }] },
-        { G: "Nul / Nul", E: [{ T: 857, C: 5.5, N: "Nul / Nul" }] },
-      ],
-    },
-    {
-      G: "Marché spécial",
-      E: [
-        { T: 9999, C: 2.2, N: "Code inconnu — doit quand même s'afficher" },
-        { T: 46, P: 201, C: 4.4, N: "Autre groupe, même code" },
-      ],
-    },
-  ];
-  return { Value: root };
 }
+
+/* ── GetGameZip : tous les marchés, formes réelles (GE par id groupe, E imbriqués, CV string) ── */
+function gameZip(ev) {
+  const { O1: home, O2: away, SE: sn } = ev;
+  const football = sn === "Football";
+  const rootE = football
+    ? [[{ T: 1, C: +pick(OUT_BAND).toFixed(3), CV: null, G: 1 }], [{ T: 2, C: +pick(OUT_BAND).toFixed(3), CV: null, G: 1 }], [{ T: 3, C: +pick(OUT_BAND).toFixed(3), CV: null, G: 1 }]]
+    : [[{ T: 401, C: +pick(OUT_BAND).toFixed(3), G: 1 }], [{ T: 402, C: +pick(OUT_BAND).toFixed(3), G: 1 }]];
+
+  const GE = football
+    ? [
+        { G: 1, E: rootE },
+        {
+          G: 8,
+          E: [
+            [
+              { T: 4, C: pick(IN_BAND), CV: String(pick(IN_BAND)), G: 8 },
+              { T: 5, C: 1.035, CV: "1.035", G: 8 },
+              { T: 6, C: 1.045, CV: "1.045", G: 8 },
+            ],
+          ],
+        },
+        {
+          G: 17,
+          E: [
+            [
+              { T: 9, P: 0.5, C: 0, CV: "1.085", G: 17, N: "Plus de 0,5 but" },
+              { T: 9, P: 1.5, C: 1.36, CV: "1.36", G: 17, N: "Plus de 1,5 buts" },
+              { T: 9, P: 2.5, C: 1.85, CV: "1.85", G: 17, N: "Plus de 2,5 buts" },
+            ],
+            [
+              { T: 10, P: 7.5, C: 1.008, CV: "1.008", G: 17, N: "Moins de 7,5 buts" },
+              { T: 10, P: 8.5, C: 1.001, CV: "1.001", G: 17, N: "Moins de 8,5 buts" },
+            ],
+          ],
+        },
+        {
+          G: 2,
+          E: [
+            [
+              { T: 7, P: 2, C: 1.06, CV: "1.06", G: 2, N: `${home} (+2)` },
+              { T: 7, P: 3, C: 1.017, CV: "1.017", G: 2, N: `${home} (+3)` },
+            ],
+            [
+              { T: 8, P: -2, C: 1.28, CV: "1.28", G: 2, N: `${away} (-2)` },
+            ],
+          ],
+        },
+        {
+          G: 19,
+          E: [[{ T: 180, C: 1.75, CV: "1.75", G: 19, N: "Oui" }, { T: 181, C: 2.05, CV: "2.05", G: 19, N: "Non" }]],
+        },
+        {
+          G: 15,
+          E: [[{ T: 11, P: 0.5, C: 1.42, CV: "1.42", G: 15 }, { T: 12, P: 2.5, C: 1.05, CV: "1.05", G: 15 }]],
+        },
+        {
+          G: 62,
+          E: [[{ T: 13, P: 0.5, C: 1.09, CV: "1.09", G: 62 }, { T: 14, P: 4.5, C: 1.01, CV: "1.01", G: 62 }]],
+        },
+        {
+          G: 9999,
+          E: [[{ T: 9999, C: 2.2, CV: "2.2", G: 9999, N: "Code inconnu — doit s'afficher" }]],
+        },
+        {
+          G: 500,
+          ME: [
+            { G: "1 / 1", E: [[{ T: 850, C: 3.2, CV: "3.2", N: `${home} / ${home}` }]] },
+            { G: "Nul / Nul", E: [[{ T: 857, C: 5.5, CV: "5.5", N: "Nul / Nul" }]] },
+          ],
+        },
+      ]
+    : [
+        { G: 1, E: rootE },
+        {
+          G: 17,
+          E: [
+            [
+              { T: 9, P: 210.5, C: 1.87, CV: "1.87", G: 17, N: "Plus de 210,5" },
+              { T: 10, P: 210.5, C: 1.93, CV: "1.93", G: 17, N: "Moins de 210,5" },
+            ],
+          ],
+        },
+        {
+          G: 2,
+          E: [
+            [
+              { T: 7, P: 4.5, C: 1.72, CV: "1.72", G: 2, N: `${home} (+4,5)` },
+              { T: 8, P: -4.5, C: 2.12, CV: "2.12", G: 2, N: `${away} (-4,5)` },
+            ],
+          ],
+        },
+      ];
+
+  return {
+    Value: {
+      I: ev.I,
+      O1: home,
+      O2: away,
+      S: ev.S,
+      SE: ev.SE,
+      LE: ev.LE,
+      WP: { P1: 0.4, PX: 0.2, P2: 0.4 },
+      E: rootE,
+      GE,
+    },
+  };
+}
+
+const eventById = new Map();
+for (const lg of leagues) for (const ev of lg.events) eventById.set(ev.I, ev);
 
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, `http://127.0.0.1:${PORT}`);
-  const origin = req.headers.origin;
-  const referer = req.headers.referer;
 
-  // Kill switch de test : /__mode?down=1 fait tomber le feed (503 sur tout).
   if (url.pathname === "/__mode") {
-    const down = url.searchParams.get("down") === "1";
-    req.socket.server.__down = down;
+    req.socket.server.__down = url.searchParams.get("down") === "1";
     res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ down }));
+    res.end(JSON.stringify({ down: req.socket.server.__down }));
     return;
   }
-
   if (req.socket.server.__down) {
     res.writeHead(503, { "content-type": "application/json" });
     res.end(JSON.stringify({ error: "feed down (mode test)" }));
     return;
   }
 
-  // Gate BetB2B : sans Origin/Referer cohérents → 406 NotAcceptable (comme le vrai feed)
-  if (!origin || !referer || !referer.startsWith(origin)) {
-    res.writeHead(406, { "content-type": "application/json" });
-    res.end(
-      JSON.stringify({
-        type: "feed/NotAcceptableException",
-        title: "NotAcceptable",
-        status: 406,
-        detail: "Error occurred during request execution. Contact the developer.",
-      }),
-    );
+  const send = (code, obj) => {
+    res.writeHead(code, { "content-type": "application/json" });
+    res.end(JSON.stringify(obj));
+  };
+
+  if (url.pathname === "/service-api/LineFeed/Get1x2_VZip") {
+    // Gate réelle : ce feed exige l'en-tête x-dt injecté par le service worker du
+    // site → 406 pour tout repli serveur. On ne l'utilise plus.
+    send(406, {
+      type: "feed/NotAcceptableException",
+      title: "NotAcceptable",
+      status: 406,
+      detail: "Error occurred during request execution. Contact the developer.",
+    });
     return;
   }
 
-  if (url.pathname === "/service-api/LineFeed/Get1x2_VZip") {
-    const sports = Number(url.searchParams.get("sports") ?? 1);
-    const count = Number(url.searchParams.get("count") ?? 50);
-    const subset = events.filter((e) => e.SI === sports).slice(0, count);
-    res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ Value: subset }));
+  if (url.pathname === "/service-api/LineFeed/GetSportsZip") {
+    const top = url.searchParams.get("top");
+    const tree = leagues.map((lg) => ({
+      I: lg.sportId,
+      N: lg.sportName,
+      E: lg.sportName,
+      L: [
+        {
+          L: lg.name,
+          LI: lg.li,
+          GC: lg.events.length,
+        },
+      ],
+    }));
+    // top !== "false" → seules les ligues « à la une » (comportement réel)
+    const filtered = top === "false" ? tree : tree.slice(0, 3);
+    send(200, { Id: 0, Success: true, Error: "", ErrorCode: 0, Guid: "", Value: filtered });
+    return;
+  }
+
+  if (url.pathname === "/service-api/LineFeed/GetChampZip") {
+    const li = Number(url.searchParams.get("champ"));
+    const top = url.searchParams.get("top");
+    if (top !== "false") {
+      send(200, { Id: 0, Success: true, Value: null }); // filtre « à la une » — comme en vrai
+      return;
+    }
+    const lg = leagues.find((l) => l.li === li);
+    send(200, { Id: 0, Success: true, Value: lg ? { G: lg.events } : null });
     return;
   }
 
   if (url.pathname === "/service-api/LineFeed/GetGameZip") {
     const id = Number(url.searchParams.get("id"));
-    const ev = byId.get(id);
     if (id % 13 === 0) {
       // panne déterministe : le scraper doit dégrader proprement
-      res.writeHead(500, { "content-type": "application/json" });
-      res.end(JSON.stringify({ error: "boom" }));
+      send(500, { error: "boom" });
       return;
     }
+    const ev = eventById.get(id);
     if (!ev) {
-      res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({ Value: null }));
+      send(200, { Id: 0, Success: true, Value: null });
       return;
     }
-    res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify(gameZip(ev)));
+    send(200, gameZip(ev));
     return;
   }
 
-  res.writeHead(404, { "content-type": "application/json" });
-  res.end(JSON.stringify({ error: "not found" }));
+  send(404, { error: "not found" });
 });
 
 server.listen(PORT, "127.0.0.1", () => {
-  const today = events.filter((e) => e.S >= MIDNIGHT / 1000 && e.S < MIDNIGHT / 1000 + 86400).length;
+  const today = [...eventById.values()].filter((e) => e.S && e.S * 1000 >= MIDNIGHT && e.S * 1000 < MIDNIGHT + 86_400_000).length;
   console.log(
-    `mock 1xBet feed sur http://127.0.0.1:${PORT} · ${events.length} événements (${today} aujourd'hui, ${byId.size} ids) · pannes GetGameZip: id%13`,
+    `mock 1xBet feed sur http://127.0.0.1:${PORT} · ${leagues.length} ligues · ${eventById.size} événements (${today} aujourd'hui) · Get1x2_VZip=406 · pannes GetGameZip: id%13`,
   );
 });

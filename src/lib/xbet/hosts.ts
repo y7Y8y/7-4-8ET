@@ -6,7 +6,7 @@ export const FEED_HOSTS = [
   "https://linebet.com",
 ] as const;
 
-/** Linebet first: same BetB2B engine, reachable via proxy quand .ci/.com bloquent. */
+/** Linebet first: même moteur BetB2B, parfois accessible quand .ci/.com bloquent. */
 export const CLIENT_HOSTS = [
   "https://linebet.com",
   "https://1xbet.ci",
@@ -14,12 +14,12 @@ export const CLIENT_HOSTS = [
   "https://1xbet.com",
 ] as const;
 
+/** Id 1xBet des sports qu'on scanne (1 = football, prioritaire). */
 export const SPORT_IDS = [1, 3, 4, 2, 6, 5, 8, 10, 29, 12, 33, 36];
 
 const UA =
   "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36";
 
-/** Base commune — complétée par feedHeaders(host) avec Origin/Referer. */
 export const FEED_HEADERS: Record<string, string> = {
   accept: "application/json, text/plain, */*",
   "accept-language": "fr-FR,fr;q=0.9",
@@ -30,10 +30,7 @@ export const FEED_HEADERS: Record<string, string> = {
   "user-agent": UA,
 };
 
-/**
- * Headers par hôte. Le moteur BetB2B répond 406 NotAcceptable si Origin/Referer
- * ne correspondent pas au skin interrogé — il faut les envoyer à chaque requête.
- */
+/** Headers par hôte (inoffensifs sur les endpoints ouverts, utiles ailleurs). */
 export function feedHeaders(host: string): Record<string, string> {
   const origin = new URL(host).origin;
   return {
@@ -43,14 +40,44 @@ export function feedHeaders(host: string): Record<string, string> {
   };
 }
 
-export function lineUrl(host: string, path: string, q: Record<string, string | number | boolean>) {
+/**
+ * Paramètres stables du feed BetB2B — combo vérifié sur le VRAI 1xbet.ci
+ * (GetSportsZip / GetChampZip / GetGameZip répondent 200 avec ces valeurs,
+ * sans les en-têtes du service worker qui verrouillent Get1x2_VZip).
+ */
+export const FEED_QUERY_DEFAULTS: Record<string, string> = {
+  lng: "fr",
+  mode: "4",
+  country: "94",
+  partner: "5",
+  gr: "650",
+};
+
+/** partner par skin (linebet d'après la doc famille BetB2B ; 1xbet = 5). */
+const PARTNER_BY_HOST: Record<string, string> = {
+  "https://linebet.com": "189",
+};
+
+export function lineUrl(
+  host: string,
+  path: string,
+  q: Record<string, string | number | boolean>,
+) {
   const u = new URL(`/service-api/LineFeed/${path}`, host);
-  for (const [k, v] of Object.entries(q)) u.searchParams.set(k, String(v));
+  const base = { ...FEED_QUERY_DEFAULTS, partner: PARTNER_BY_HOST[new URL(host).origin] ?? FEED_QUERY_DEFAULTS.partner };
+  for (const [k, v] of Object.entries({ ...base, ...q })) u.searchParams.set(k, String(v));
   return u.toString();
 }
 
-/** Le feed autorise uniquement ces chemins — le proxy /api/xbet/feed les vérifie. */
-export const FEED_PATHS = ["/service-api/LineFeed/Get1x2_VZip", "/service-api/LineFeed/GetGameZip"];
+/**
+ * Endpoints NON verrouillés du feed (pas d'en-tête x-dt du service worker) :
+ * Get1x2_VZip / GetSportsShortZip → 406 côté serveur, on ne les utilise plus.
+ */
+export const FEED_PATHS = [
+  "/service-api/LineFeed/GetSportsZip",
+  "/service-api/LineFeed/GetChampZip",
+  "/service-api/LineFeed/GetGameZip",
+];
 
 /** Override (tests, miroirs) : XBET_FEED_HOSTS="https://host1,https://host2". */
 export function feedHosts(): string[] {

@@ -48,16 +48,38 @@ export function baseMarkets(ev: EventZip): DayMarket[] {
   return [{ name: "Résultat du match", selections }];
 }
 
-/** Un nœud est un groupe de marchés s'il porte un nom (G) et des cotes (E). */
+/** Un nœud est un groupe de marchés s'il porte un id/nom (G) et des cotes (E). */
+function groupLabel(g: unknown): string | null {
+  if (typeof g === "string" && g.trim() !== "") return g.trim();
+  if (typeof g === "number" && Number.isFinite(g)) {
+    return GROUP_LABELS[g] ?? `Marché ${g}`;
+  }
+  return null;
+}
+
+/** Ids de groupes vus sur le vrai feed (GetGameZip isNewBuilder). */
+const GROUP_LABELS: Record<number, string> = {
+  1: "Résultat du match",
+  2: "Handicap",
+  8: "Double chance",
+  15: "Total buts — équipe 1",
+  17: "Total buts",
+  19: "Les deux équipes marquent",
+  62: "Total buts — équipe 2",
+};
+
 function looksLikeGroup(node: Record<string, unknown>) {
-  return typeof node.G === "string" && node.G.trim() !== "" && Array.isArray(node.E);
+  return groupLabel(node.G) !== null && Array.isArray(node.E);
 }
 
 /** E à la racine du zip = marché principal (1/N/2). */
 function isMainResultRoot(node: Record<string, unknown>) {
-  const sels = (Array.isArray(node.E) ? node.E : []).map((c) =>
-    toSelection((c ?? {}) as RawCoeff, "", ""),
-  );
+  const rows = Array.isArray(node.E) ? node.E : [];
+  const sels: Array<DaySelection | null> = [];
+  for (const row of rows) {
+    const cells = Array.isArray(row) ? row : [row];
+    for (const c of cells) sels.push(toSelection((c ?? {}) as RawCoeff, "", ""));
+  }
   return sels.some((s) => s && (s.code === 1 || s.code === 2 || s.code === 3));
 }
 
@@ -80,15 +102,19 @@ export function marketsFromGameZip(json: unknown, home: string, away: string): D
     }
     const n = node as Record<string, unknown>;
     let current = group;
-    if (looksLikeGroup(n)) current = String(n.G).trim();
+    if (looksLikeGroup(n)) current = groupLabel(n.G);
     // À la racine : si des groupes existent déjà (GE/ME), le E racine est un doublon du principal.
     const skipE = isRoot && (Array.isArray(n.GE) || Array.isArray(n.ME));
     if (Array.isArray(n.E) && !skipE) {
       const label = current ?? (isMainResultRoot(n) ? "Résultat du match" : "Marchés");
       const sels = found.get(label) ?? [];
-      for (const c of n.E as unknown[]) {
-        const s = toSelection((c ?? {}) as RawCoeff, home, away);
-        if (s) sels.push(s);
+      for (const row of n.E as unknown[]) {
+        // E peut être [coeff, coeff] OU [[coeff…],[coeff…]] (format isNewBuilder)
+        const cells = Array.isArray(row) ? row : [row];
+        for (const c of cells) {
+          const s = toSelection((c ?? {}) as RawCoeff, home, away);
+          if (s) sels.push(s);
+        }
       }
       if (sels.length) found.set(label, sels);
     }

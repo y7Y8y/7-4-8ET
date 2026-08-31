@@ -25,17 +25,21 @@ CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 30 "$BASE/journee")
 check "/journee → / (plus d'UI marchés)" 307 "$CODE"
 
 echo "── 2. Proxy feed same-origin (fallback téléphone, anti-SSRF)"
-LIST="http://localhost:8787/service-api/LineFeed/Get1x2_VZip?sports=1&count=5&lng=fr&mode=4"
+LIST="http://localhost:8787/service-api/LineFeed/GetSportsZip?top=false"
 ENC=$(node -e "console.log(encodeURIComponent('$LIST'))")
 CODE=$(curl -s -o /tmp/feedlist.json -w "%{http_code}" --max-time 30 "$BASE/api/xbet/feed?url=$ENC")
-check "proxy liste" 200 "$CODE"
-[ -s /tmp/feedlist.json ] && jq_get /tmp/feedlist.json "console.log(Array.isArray(j.Value)?'array':'pas-array')" | grep -q array \
-  && check "proxy liste JSON Value[]" yes yes || check "proxy liste JSON Value[]" yes no
+check "proxy arbre sports" 200 "$CODE"
+[ -s /tmp/feedlist.json ] && node -e "const j=JSON.parse(require('fs').readFileSync('/tmp/feedlist.json','utf8'));console.log(Array.isArray(j.Value)?'array':'pas-array')" | grep -q array \
+  && check "proxy arbre JSON Value[]" yes yes || check "proxy arbre JSON Value[]" yes no
 
-GAME="http://localhost:8787/service-api/LineFeed/GetGameZip?id=1000001&lng=fr&isSubGames=true&GroupEvents=true"
+GAME="http://localhost:8787/service-api/LineFeed/GetGameZip?id=1000001&isNewBuilder=true&GroupEvents=true&marketType=1&countevents=250"
 ENC2=$(node -e "console.log(encodeURIComponent('$GAME'))")
 CODE=$(curl -s -o /tmp/feedgame.json -w "%{http_code}" --max-time 30 "$BASE/api/xbet/feed?url=$ENC2")
 check "proxy game" 200 "$CODE"
+
+GATED=$(node -e "console.log(encodeURIComponent('http://localhost:8787/service-api/LineFeed/Get1x2_VZip?sports=1&count=3'))")
+CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 30 "$BASE/api/xbet/feed?url=$GATED")
+check "proxy refuse le feed verrouillé (Get1x2_VZip)" 403 "$CODE"
 
 BAD=$(node -e "console.log(encodeURIComponent('http://localhost:8787/api/health'))")
 CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 30 "$BASE/api/xbet/feed?url=$BAD")
