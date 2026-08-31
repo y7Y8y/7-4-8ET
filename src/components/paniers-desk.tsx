@@ -29,6 +29,10 @@ export function PaniersDesk() {
     void refresh();
   }, []);
 
+  useEffect(() => {
+    if (!open && state.paniers[0]) setOpen(state.paniers[0].id);
+  }, [state.paniers, open]);
+
   async function refresh() {
     try {
       const res = await fetch("/api/xbet/paniers", { cache: "no-store" });
@@ -109,6 +113,13 @@ export function PaniersDesk() {
         <p className="mt-2 text-xs text-mist">
           {state.host ? new URL(state.host).hostname : "1xBet"}
           {state.scannedAt ? ` · ${fmtKick(state.scannedAt)}` : ""} · {state.pool} matchs
+        </p>
+        <p className="mt-3 rounded-2xl border border-white/8 bg-ink-800/40 px-3 py-2 text-xs text-mist">
+          Tu es déjà dans l&apos;app. En bas : <span className="text-paper">Paniers</span> ·{" "}
+          <Link href="/scan" className="text-lime">
+            Scanner
+          </Link>{" "}
+          (bouton vert) · Infos. Appuie un panier pour voir match + cote, puis Copier, et recolle sur 1xBet.
         </p>
       </div>
       {note && <p className="rounded-xl border border-live/30 bg-live/10 px-3 py-2 text-xs text-live">{note}</p>}

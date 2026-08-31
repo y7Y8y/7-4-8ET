@@ -20,6 +20,13 @@ function inBand(c: number, min: number, max: number) {
   return c + 1e-9 >= min && c - 1e-9 <= max;
 }
 
+/** Marchés que tu retrouves sur 1xBet sans code interne. */
+const COPYABLE = new Set([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 180, 181, 401, 402, 3653, 3655]);
+
+function isCopyable(t: number) {
+  return COPYABLE.has(t);
+}
+
 function walkCoeffs(node: unknown, out: Coeff[]) {
   if (!node || typeof node !== "object") return;
   const n = node as Record<string, unknown>;
@@ -53,6 +60,8 @@ export function legsFromEvent(ev: EventZip, host: string, p: ScanParams, now = D
   const away = (ev.O2 ?? "").trim();
   const ko = eventKickoff(ev);
   if (!home || !away || !ko) return [];
+  if (/^à domicile$/i.test(home) || /^à l['’]extérieur$/i.test(away)) return [];
+  if (/^home$/i.test(home) && /^away$/i.test(away)) return [];
   const coeffs: Coeff[] = [];
   walkCoeffs(ev, coeffs);
   const seen = new Set<string>();
@@ -60,6 +69,7 @@ export function legsFromEvent(ev: EventZip, host: string, p: ScanParams, now = D
   for (const c of coeffs) {
     const odd = Number(c.CV ?? c.C);
     if (!inBand(odd, p.oddMin, p.oddMax)) continue;
+    if (!isCopyable(c.T)) continue;
     const key = `${ev.I}-${c.T}-${c.P ?? "x"}-${odd}`;
     if (seen.has(key)) continue;
     seen.add(key);
@@ -80,11 +90,17 @@ export function legsFromEvent(ev: EventZip, host: string, p: ScanParams, now = D
   return legs;
 }
 
+function classicScore(leg: XbetLeg) {
+  const dist = Math.abs(leg.odd - 1.01);
+  const classic = /^(1|X|2|1X|12|X2|Handicap|Plus de|Moins de|Total|Vainqueur)/.test(leg.market) ? 0 : 0.02;
+  return dist + classic;
+}
+
 export function onePerMatch(legs: XbetLeg[]) {
   const best = new Map<number, XbetLeg>();
   for (const l of legs) {
     const prev = best.get(l.eventId);
-    if (!prev || Math.abs(l.odd - 1.01) < Math.abs(prev.odd - 1.01)) best.set(l.eventId, l);
+    if (!prev || classicScore(l) < classicScore(prev)) best.set(l.eventId, l);
   }
   return [...best.values()].sort((a, b) => +new Date(a.kickoff) - +new Date(b.kickoff));
 }

@@ -15,6 +15,12 @@ const T: Record<number, string> = {
   14: "Total 2 moins",
   180: "Les deux marquent oui",
   181: "Les deux marquent non",
+  216: "Au moins un but",
+  401: "Vainqueur 1",
+  402: "Vainqueur 2",
+  3653: "Vainqueur (prorog. incl.)",
+  3654: "Nul (prorog. incl.)",
+  3655: "Vainqueur 2 (prorog. incl.)",
 };
 
 export function marketLabel(t: number, p?: number) {
@@ -34,7 +40,13 @@ export function pickLabel(t: number, home: string, away: string, p?: number) {
   if (t === 5) return `${home} ou ${away}`;
   if (t === 7) return `${home} ${p !== undefined ? (p > 0 ? `+${p}` : p) : "0"}`;
   if (t === 8) return `${away} ${p !== undefined ? (p > 0 ? `+${p}` : p) : "0"}`;
-  if (t === 9) return `Plus de ${p}`;
-  if (t === 10) return `Moins de ${p}`;
+  if (t === 9) return `Plus de ${p} buts`;
+  if (t === 10) return `Moins de ${p} buts`;
+  if (t === 11) return `${home} plus de ${p}`;
+  if (t === 12) return `${home} moins de ${p}`;
+  if (t === 13) return `${away} plus de ${p}`;
+  if (t === 14) return `${away} moins de ${p}`;
+  if (t === 401 || t === 3653) return home;
+  if (t === 402 || t === 3655) return away;
   return marketLabel(t, p);
 }

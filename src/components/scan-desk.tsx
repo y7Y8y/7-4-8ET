@@ -87,7 +87,7 @@ export function ScanDesk() {
         <p className="text-[11px] uppercase tracking-[0.28em] text-lime">Pré-match 1xBet</p>
         <h1 className="mt-1 font-display text-3xl font-semibold">Scanner</h1>
         <p className="mt-2 text-sm text-mist">
-          Pas de login. Pas de mise auto. On lit les cotes, on fait les paniers, tu recopies sur 1xBet.
+          Un bouton. On lit 1xBet depuis ce téléphone, on fabrique les paniers. Ensuite onglet Paniers → Copier → tu colles sur 1xBet toi-même.
         </p>
       </div>
 
