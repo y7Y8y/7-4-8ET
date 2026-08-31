@@ -2,10 +2,11 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Layers, Radar, Info } from "lucide-react";
+import { Layers, Radar, Info, CalendarDays } from "lucide-react";
 
 const NAV = [
   { href: "/", label: "Paniers", icon: Layers },
+  { href: "/journee", label: "Journée", icon: CalendarDays },
   { href: "/scan", label: "Scanner", icon: Radar },
   { href: "/infos", label: "Infos", icon: Info },
 ];
@@ -24,7 +25,7 @@ export function PhoneShell({ children }: { children: React.ReactNode }) {
         </span>
       </header>
       <main className="px-4 pb-28 pt-4">{children}</main>
-      <nav className="fixed inset-x-0 bottom-0 z-30 mx-auto grid max-w-lg grid-cols-3 border-t border-white/8 bg-ink-950/95 px-2 pt-2 backdrop-blur pb-[max(0.5rem,env(safe-area-inset-bottom))]">
+      <nav className="fixed inset-x-0 bottom-0 z-30 mx-auto grid max-w-lg grid-cols-4 border-t border-white/8 bg-ink-950/95 px-2 pt-2 backdrop-blur pb-[max(0.5rem,env(safe-area-inset-bottom))]">
         {NAV.map((item) => {
           const active = item.href === "/" ? path === "/" : path.startsWith(item.href);
           const Icon = item.icon;

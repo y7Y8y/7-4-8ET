@@ -116,6 +116,10 @@ export function PaniersDesk() {
         </p>
         <p className="mt-3 rounded-2xl border border-white/8 bg-ink-800/40 px-3 py-2 text-xs text-mist">
           Tu es déjà dans l&apos;app. En bas : <span className="text-paper">Paniers</span> ·{" "}
+          <Link href="/journee" className="text-lime">
+            Journée
+          </Link>{" "}
+          (tous les matchs du jour) ·{" "}
           <Link href="/scan" className="text-lime">
             Scanner
           </Link>{" "}

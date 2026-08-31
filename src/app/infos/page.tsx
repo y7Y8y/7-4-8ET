@@ -44,14 +44,21 @@ export default function InfosPage() {
           {link && <p className="mt-2 break-all text-[11px] text-mist/80">{link}</p>}
         </li>
         <li className="rounded-2xl border border-white/8 bg-ink-800/40 p-4">
-          <p className="text-paper">2. Scanner</p>
+          <p className="text-paper">2. La journée</p>
+          <p className="mt-1">
+            L&apos;onglet <Link href="/journee" className="text-lime">Journée</Link> montre toutes les ligues qui jouent aujourd&apos;hui (ou hier/demain) : heure de chaque match, cotes, et tous ses marchés en appuyant dessus. Bouton{" "}
+            <span className="text-paper">Actualiser</span> pour relire 1xBet.
+          </p>
+        </li>
+        <li className="rounded-2xl border border-white/8 bg-ink-800/40 p-4">
+          <p className="text-paper">3. Scanner (paniers 1,01)</p>
           <p className="mt-1">
             En bas, appuie <Link href="/scan" className="text-lime">Scanner</Link>, puis le bouton vert{" "}
             <span className="text-paper">Lancer le scan</span>. Ça lit 1xBet (1xbet.ci). 1–2 min. Ensuite tu reviens sur Paniers.
           </p>
         </li>
         <li className="rounded-2xl border border-white/8 bg-ink-800/40 p-4">
-          <p className="text-paper">3. Recopier sur 1xBet</p>
+          <p className="text-paper">4. Recopier sur 1xBet</p>
           <p className="mt-1">Ouvre un panier : tu vois équipe vs équipe, le pari (Plus de 0,5 buts, Handicap +1…), la cote. Copier → colle dans 1xBet. Pas de login ici, pas de mise auto.</p>
         </li>
         <li className="rounded-2xl border border-white/8 bg-ink-800/40 p-4">
