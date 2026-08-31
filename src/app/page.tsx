@@ -4,8 +4,10 @@ import { Crest } from "@/components/crest";
 import { MatchCard, MatchRow } from "@/components/match-card";
 import { StatusChip } from "@/components/live-clock";
 import { Ticker } from "@/components/ticker";
+import { X1Ticket } from "@/components/ticket";
 import { allMatches, edges, featuredMatch, liveMatches, matchesOn } from "@/lib/engine";
 import { fmtTime, oddsFr, pct, ymd } from "@/lib/format";
+import { x1bet } from "@/lib/model";
 
 export const dynamic = "force-dynamic";
 
@@ -73,14 +75,16 @@ export default function HomePage() {
             </Link>
           </div>
           <div className="grid content-end gap-3">
-            {featured.odds[0] && (
+            {x1bet(featured) ? (
+              <X1Ticket match={featured} />
+            ) : featured.odds[0] ? (
               <div className="rounded-2xl border border-white/10 bg-ink-950/70 p-4 backdrop-blur">
-                <p className="text-[10px] uppercase tracking-[0.2em] text-mist">Meilleure 1N2</p>
+                <p className="text-[10px] uppercase tracking-[0.2em] text-mist">1N2</p>
                 <div className="mt-3 grid grid-cols-3 gap-2 text-center">
                   {[
-                    [featured.home.short, Math.max(...featured.odds.map((o) => o.home))],
-                    ["Nul", Math.max(...featured.odds.map((o) => o.draw))],
-                    [featured.away.short, Math.max(...featured.odds.map((o) => o.away))],
+                    [featured.home.short, featured.odds[0].home],
+                    ["Nul", featured.odds[0].draw],
+                    [featured.away.short, featured.odds[0].away],
                   ].map(([lab, n]) => (
                     <div key={String(lab)} className="rounded-xl bg-white/5 px-2 py-3">
                       <div className="text-[10px] uppercase tracking-wider text-mist">{lab}</div>
@@ -89,7 +93,7 @@ export default function HomePage() {
                   ))}
                 </div>
               </div>
-            )}
+            ) : null}
             {featured.prediction && (
               <div className="rounded-2xl border border-white/10 bg-ink-950/70 p-4 backdrop-blur">
                 <p className="text-[10px] uppercase tracking-[0.2em] text-mist">xG du modèle</p>

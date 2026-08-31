@@ -7,7 +7,7 @@ import { predict, valueBets } from "./model";
 import { afStatus } from "./providers/api-football";
 import { fdCompetitions } from "./providers/football-data";
 import { hlMatches } from "./providers/highlightly";
-import { oddsSports } from "./providers/odds-api";
+import { fetchEuOdds, namesMatch, oddsSports, quotesForEvent } from "./providers/odds-api";
 import type {
   Highlight,
   Match,
@@ -22,6 +22,29 @@ function liveNow() {
 
 export function allMatches(): Match[] {
   return liveNow().sort((a, b) => +new Date(a.kickoff) - +new Date(b.kickoff));
+}
+
+export async function allMatchesLive(): Promise<Match[]> {
+  const base = allMatches();
+  try {
+    const events = await fetchEuOdds();
+    if (!events.length) return base;
+    return base.map((m) => {
+      const ev = events.find(
+        (e) => namesMatch(e.home_team, m.home.name) && namesMatch(e.away_team, m.away.name),
+      );
+      if (!ev) return m;
+      const quotes = quotesForEvent(ev);
+      if (!quotes.length) return m;
+      const merged = [...quotes];
+      for (const q of m.odds) {
+        if (!merged.some((x) => x.bookmaker === q.bookmaker)) merged.push(q);
+      }
+      return { ...m, odds: merged, sources: Array.from(new Set([...m.sources, "odds-api"])) };
+    });
+  } catch {
+    return base;
+  }
 }
 
 export function matchesOn(day: string): Match[] {
@@ -43,6 +66,13 @@ export function getMatch(id: string): MatchDetail | null {
   if (!base) return null;
   const extra = DETAILS[id] ?? {};
   return { ...base, ...extra };
+}
+
+export async function getMatchLive(id: string): Promise<MatchDetail | null> {
+  const list = await allMatchesLive();
+  const base = list.find((m) => m.id === id);
+  if (!base) return null;
+  return { ...base, ...(DETAILS[id] ?? {}) };
 }
 
 export function standings(leagueId: string): StandingRow[] {

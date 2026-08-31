@@ -2,7 +2,8 @@ import { Crest } from "@/components/crest";
 import { LiveMinute, StatusChip } from "@/components/live-clock";
 import { OddsBoard } from "@/components/odds-board";
 import { Pitch } from "@/components/pitch";
-import { getMatch } from "@/lib/engine";
+import { X1Ticket } from "@/components/ticket";
+import { getMatch, getMatchLive } from "@/lib/engine";
 import { fmtDateLong, fmtTime, pct } from "@/lib/format";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
@@ -18,7 +19,7 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
 
 export default async function MatchPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const m = getMatch(id);
+  const m = (await getMatchLive(id)) ?? getMatch(id);
   if (!m) notFound();
   const pred = m.prediction;
 
@@ -133,9 +134,12 @@ export default async function MatchPage({ params }: { params: Promise<{ id: stri
         </section>
       )}
 
-      <section>
-        <h2 className="mb-4 font-display text-xl">Cotes 1N2</h2>
-        <OddsBoard match={m} />
+      <section className="grid gap-6 lg:grid-cols-[1.2fr_.8fr]">
+        <div>
+          <h2 className="mb-4 font-display text-xl">Cotes · 1xBet en tête</h2>
+          <OddsBoard match={m} />
+        </div>
+        <X1Ticket match={m} />
       </section>
     </div>
   );

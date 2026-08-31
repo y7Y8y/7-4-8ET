@@ -10,24 +10,41 @@ export function OddsBoard({ match }: { match: Match }) {
   const pred = match.prediction;
   return (
     <div className="overflow-x-auto rounded-2xl border border-white/8">
-      <table className="w-full min-w-[520px] text-left text-sm">
+      <table className="w-full min-w-[640px] text-left text-sm">
         <thead className="bg-white/5 text-[11px] uppercase tracking-[0.16em] text-mist">
           <tr>
             <th className="px-4 py-3 font-medium">Bookmaker</th>
             <th className="px-4 py-3 font-medium">{match.home.short}</th>
             <th className="px-4 py-3 font-medium">Nul</th>
             <th className="px-4 py-3 font-medium">{match.away.short}</th>
+            <th className="px-4 py-3 font-medium">+2,5</th>
+            <th className="px-4 py-3 font-medium">−2,5</th>
           </tr>
         </thead>
         <tbody>
-          {match.odds.map((q) => (
-            <tr key={q.bookmaker} className="border-t border-white/5">
-              <td className="px-4 py-3 text-paper">{q.bookmaker}</td>
-              <Cell n={q.home} best={best.home} />
-              <Cell n={q.draw} best={best.draw} />
-              <Cell n={q.away} best={best.away} />
-            </tr>
-          ))}
+          {match.odds.map((q) => {
+            const mine = /1xbet/i.test(q.bookmaker);
+            return (
+              <tr
+                key={q.bookmaker}
+                className={`border-t border-white/5 ${mine ? "bg-lime/10" : ""}`}
+              >
+                <td className="px-4 py-3 text-paper">
+                  {q.bookmaker}
+                  {mine && (
+                    <span className="ml-2 rounded-full bg-lime px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-ink-950">
+                      1xBet
+                    </span>
+                  )}
+                </td>
+                <Cell n={q.home} best={best.home} />
+                <Cell n={q.draw} best={best.draw} />
+                <Cell n={q.away} best={best.away} />
+                <td className="px-4 py-3 tabular text-mist">{q.over25 ? oddsFr(q.over25) : "—"}</td>
+                <td className="px-4 py-3 tabular text-mist">{q.under25 ? oddsFr(q.under25) : "—"}</td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
       {pred && (

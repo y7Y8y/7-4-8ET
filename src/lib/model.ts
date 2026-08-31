@@ -140,6 +140,22 @@ export function bestOdds(match: Match) {
   );
 }
 
+export function x1bet(match: Match) {
+  return match.odds.find((q) => /1xbet|onexbet/i.test(q.bookmaker)) ?? null;
+}
+
+export function ticketLine(
+  match: Match,
+  side: "home" | "draw" | "away",
+): { label: string; odds: number; bookmaker: string } | null {
+  const q = x1bet(match);
+  if (!q) return null;
+  const label =
+    side === "home" ? `1 ${match.home.name}` : side === "away" ? `2 ${match.away.name}` : "X Nul";
+  const odds = side === "home" ? q.home : side === "away" ? q.away : q.draw;
+  return { label, odds, bookmaker: "1xBet" };
+}
+
 export function valueBets(matches: Match[], minEdge = 0.05): ValueBet[] {
   const out: ValueBet[] = [];
   for (const match of matches) {

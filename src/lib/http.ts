@@ -2,7 +2,7 @@ export async function getJson<T>(
   url: string,
   init: RequestInit & { timeoutMs?: number } = {},
 ): Promise<T> {
-  const { timeoutMs = 4500, ...rest } = init;
+  const { timeoutMs = 1800, ...rest } = init;
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {

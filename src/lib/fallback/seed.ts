@@ -76,9 +76,21 @@ function books(
   draw: number,
   away: number,
   extras: Partial<OddsQuote> = {},
+  x1?: { home: number; draw: number; away: number } & Partial<OddsQuote>,
 ): OddsQuote[] {
   const jitter = (n: number, j: number) => +(n * j).toFixed(2);
+  const oneX: OddsQuote = {
+    bookmaker: "1xBet",
+    home: x1?.home ?? jitter(home, 1.03),
+    draw: x1?.draw ?? jitter(draw, 1.02),
+    away: x1?.away ?? jitter(away, 1.04),
+    over25: x1?.over25 ?? extras.over25,
+    under25: x1?.under25 ?? extras.under25,
+    bttsYes: x1?.bttsYes ?? extras.bttsYes,
+    bttsNo: x1?.bttsNo ?? extras.bttsNo,
+  };
   return [
+    oneX,
     { bookmaker: "Winamax", home, draw, away, ...extras },
     {
       bookmaker: "Betclic",
@@ -147,7 +159,7 @@ export const MATCHES: Match[] = [
       { minute: 79, type: "yellow", team: "home", player: "Ramadani" },
       { minute: 88, type: "goal", team: "away", player: "Soulé" },
     ],
-    odds: books(4.8, 3.55, 1.78, { over25: 2.05, under25: 1.78, bttsYes: 1.87, bttsNo: 1.92 }),
+    odds: books(6.5, 4.2, 1.44, { over25: 2.1, under25: 1.72, bttsYes: 2.25, bttsNo: 1.62 }, { home: 7.2, draw: 4.25, away: 1.52, over25: 2.08, under25: 1.74 }),
     highlightThumb: "/hero-camp-nou.jpg",
   }),
   match({
@@ -165,7 +177,7 @@ export const MATCHES: Match[] = [
       { minute: 71, type: "goal", team: "away", player: "Mayoral" },
       { minute: 84, type: "red", team: "away", player: "Alderete" },
     ],
-    odds: books(2.35, 3.05, 3.4, { over25: 2.4, under25: 1.55, bttsYes: 2.05, bttsNo: 1.75 }),
+    odds: books(2.2, 3.2, 3.65, { over25: 2.5, under25: 1.53, bttsYes: 2.1, bttsNo: 1.67 }, { home: 2.24, draw: 3.31, away: 3.76, over25: 2.45, under25: 1.55 }),
   }),
   match({
     id: "atalanta-bologna",
@@ -182,7 +194,7 @@ export const MATCHES: Match[] = [
       { minute: 63, type: "goal", team: "away", player: "Castro", assist: "Orsolini" },
       { minute: 81, type: "goal", team: "home", player: "De Ketelaere" },
     ],
-    odds: books(1.72, 3.8, 4.7, { over25: 1.82, under25: 2.0, bttsYes: 1.74, bttsNo: 2.08 }),
+    odds: books(1.72, 3.8, 4.7, { over25: 1.82, under25: 2.0, bttsYes: 1.74, bttsNo: 2.08 }, { home: 1.75, draw: 3.88, away: 4.85, over25: 1.8, under25: 2.02 }),
   }),
   match({
     id: "villa-arsenal",
@@ -202,7 +214,7 @@ export const MATCHES: Match[] = [
       { minute: 74, type: "sub", team: "home", player: "Bailey" },
       { minute: 89, type: "yellow", team: "home", player: "Konsa" },
     ],
-    odds: books(4.9, 3.85, 1.7, { over25: 1.85, under25: 1.97, bttsYes: 1.8, bttsNo: 2.0 }),
+    odds: books(6, 4.6, 1.52, { over25: 1.88, under25: 1.95, bttsYes: 1.82, bttsNo: 1.95 }, { home: 6.45, draw: 4.52, away: 1.57, over25: 1.76, under25: 2.04, bttsYes: 1.8, bttsNo: 2.0 }),
   }),
   match({
     id: "benfica-estoril",
@@ -216,7 +228,7 @@ export const MATCHES: Match[] = [
       { minute: 34, type: "goal", team: "home", player: "Aktürkoğlu" },
       { minute: 70, type: "goal", team: "home", player: "Pavlidis" },
     ],
-    odds: books(1.22, 6.4, 12, { over25: 1.55, under25: 2.4 }),
+    odds: books(1.22, 6.4, 12, { over25: 1.55, under25: 2.4 }, { home: 1.2, draw: 6.8, away: 13 }),
   }),
   match({
     id: "braga-guima",
@@ -247,7 +259,7 @@ export const MATCHES: Match[] = [
       { minute: 61, type: "goal", team: "home", player: "Raphinha" },
       { minute: 83, type: "goal", team: "away", player: "De Frutos" },
     ],
-    odds: books(1.22, 6.6, 13.5, { over25: 1.48, under25: 2.62, bttsYes: 2.15, bttsNo: 1.68 }),
+    odds: books(1.12, 10, 20, { over25: 1.3, under25: 3.35, bttsYes: 2.2, bttsNo: 1.65 }, { home: 1.13, draw: 10.7, away: 26, over25: 1.32, under25: 3.25 }),
   }),
   match({
     id: "manu-ipswich",

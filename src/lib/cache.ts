@@ -16,3 +16,14 @@ export function peek<T>(key: string): T | null {
   if (!hit || hit.exp <= Date.now()) return null;
   return hit.value as T;
 }
+
+export async function cachedCatch<T>(key: string, ttlMs: number, fn: () => Promise<T>, fallback: T): Promise<T> {
+  const hit = peek<T>(key);
+  if (hit !== null) return hit;
+  try {
+    return await cached(key, ttlMs, fn);
+  } catch {
+    store.set(key, { exp: Date.now() + 30_000, value: fallback });
+    return fallback;
+  }
+}
