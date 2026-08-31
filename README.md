@@ -27,17 +27,17 @@ Robustesse : budget temps global (38 s, réponse < 60 s), un zip en échec → c
 
 ## Scan
 
-`POST /api/xbet/scan` lit `LineFeed/Get1x2_VZip` puis `GetGameZip` (les 1,01 sont dans le zip du match, pas dans la liste). Budget interne 40 s, réponse garantie < 60 s (plafond Vercel).
+Le scan utilise uniquement les endpoints **non verrouillés** du feed BetB2B — vérifiés sur le vrai `1xbet.ci` :
 
-Le feed BetB2B renvoie `406 NotAcceptable` sans les en-têtes `Origin`/`Referer` du skin — ils sont envoyés sur chaque requête (`feedHeaders`).
+1. `GetSportsZip?top=false` → toutes les ligues qui jouent (tous sports) ;
+2. `GetChampZip?champ=<ligue>&top=false` → les matchs de chaque ligue (équipes, heures) ;
+3. `GetGameZip?id=<match>&isNewBuilder=true…` → **tous les marchés** du match → on garde la bande 1,007–1,01 (une cote par match, la plus proche de 1,01), uniquement sur des matchs **pas encore commencés** (buffer 20 min, jamais de live).
 
-Si le serveur n’atteint pas 1xBet, le téléphone scanne via le navigateur :
+`Get1x2_VZip` est **verrouillé** (406 : exige l'en-tête `x-dt` injecté par le service worker du site — impossible à rejouer côté serveur). On ne l'utilise plus.
 
-1. fetch direct vers 1xBet (passe si CORS ouvert) ;
-2. **proxy same-origin `GET /api/xbet/feed?url=…`** (liste blanche LineFeed uniquement, pas de CORS, sortie par le serveur) ;
-3. proxys CORS publics — dernier recours.
+Budget interne 40 s, réponse garantie < 60 s (plafond Vercel). Si le serveur n'atteint pas 1xBet, le téléphone scanne via le navigateur : fetch direct → proxy same-origin `GET /api/xbet/feed?url=…` (liste blanche LineFeed ouverts) → proxys publics en dernier recours.
 
-L’état est persisté `data/paniers.json` → `/tmp` → mémoire (le FS Vercel est en lecture seule ; chaque appel disque est borné dans le temps), et le téléphone garde sa copie en `localStorage`, qui prime.
+L'état est persisté `data/paniers.json` → `/tmp` → mémoire (FS Vercel en lecture seule ; chaque appel disque est borné dans le temps), et le téléphone garde sa copie en `localStorage`, qui prime.
 
 `GET /api/xbet/paniers` — état + purge. `POST /api/xbet/ingest` — le téléphone renvoie les jambes trouvées.
 

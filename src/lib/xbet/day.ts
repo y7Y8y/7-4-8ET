@@ -1,12 +1,12 @@
-import { SPORT_IDS, feedHosts, lineUrl } from "./hosts";
-import { baseMarkets, eventKickoff, eventLive, marketsFromGameZip } from "./parse-day";
-import { parseEventList, parseGame } from "./parse";
-import { getJsonNative, pickHost, type Getter } from "./scrape";
+import { feedHosts, lineUrl } from "./hosts";
+import { eventKickoff, marketsFromGameZip } from "./parse-day";
+import { getJsonNative, gameZipUrl, leaguesFromTree, parseChampGames, pickHostWithTree, type Getter } from "./scrape";
 import type { DayLeague, DayLine, DayMatch } from "./day-types";
 
 export type DayOptions = {
   day: string; // YYYY-MM-DD (UTC)
-  maxMatches?: number; // plafond d'enrichissement GetGameZip
+  maxMatches?: number; // plafale d'enrichissement GetGameZip
+  maxLeagues?: number;
   concurrency?: number;
   budgetMs?: number;
   hosts?: readonly string[];
@@ -14,137 +14,136 @@ export type DayOptions = {
 };
 
 /**
- * Récupère TOUTE la journée 1xBet : toutes les ligues qui jouent ce jour-là,
- * chaque match avec heure, équipes et tous ses marchés.
- *
- * Robustesse :
- *  - budget temps global (liste + enrichissement) → on répond TOUJOURS ;
- *  - un GetGameZip qui échoue ne casse rien : le match garde ses cotes de base ;
- *  - parseur tolérant (codes inconnus, groupes renommés, CV string) ;
- *  - dédoublonnage par id d'événement, matchs sans équipe/heure ignorés.
+ * Ligne du jour complète : toutes les ligues qui jouent ce jour-là, chaque match
+ * avec heure, équipes et tous ses marchés — sur les endpoints NON verrouillés
+ * (GetSportsZip → GetChampZip → GetGameZip), donc 100 % côté serveur.
  */
 export async function scrapeDay(getJson: Getter, opts: DayOptions): Promise<DayLine> {
   const maxMatches = opts.maxMatches ?? 220;
+  const maxLeagues = opts.maxLeagues ?? 60;
   const concurrency = opts.concurrency ?? 6;
   const deadline = Date.now() + (opts.budgetMs ?? 40_000);
   const onProgress = opts.onProgress ?? (() => undefined);
   const { start, end } = dayWindow(opts.day);
 
-  const host = await pickHost(getJson, opts.hosts ?? feedHosts(), deadline - 8_000);
-  if (!host) {
-    return emptyLine(opts.day, null, "1xBet injoignable. Réessaie dans un instant.");
-  }
+  const picked = await pickHostWithTree(getJson, opts.hosts ?? feedHosts(), deadline - 8_000);
+  if (!picked) return emptyLine(opts.day, null, "1xBet injoignable. Réessaie dans un instant.");
+  const { host, sports } = picked;
 
-  // 1. Liste complète par sport (toutes les ligues du jour).
-  const raw: ReturnType<typeof parseEventList> = [];
-  for (const si of SPORT_IDS) {
-    if (Date.now() > deadline) break;
-    try {
-      const json = await getJson(
-        lineUrl(host, "Get1x2_VZip", { sports: si, count: 500, lng: "fr", mode: 4 }),
-      );
-      raw.push(...parseEventList(json));
-    } catch {
-      /* sport indispo sur ce skin — on continue */
-    }
-  }
-
+  const leagues = leaguesFromTree(sports, maxLeagues);
   const now = Date.now();
   const seen = new Set<number>();
   const matches: DayMatch[] = [];
-  for (const ev of raw) {
-    if (!ev.I || seen.has(ev.I)) continue;
-    seen.add(ev.I);
-    const home = (ev.O1 ?? "").trim();
-    const away = (ev.O2 ?? "").trim();
-    const ko = eventKickoff(ev);
-    if (!home || !away || !ko) continue;
-    if (/^(à domicile|home)$/i.test(home) || /^(à l['’]extérieur|away)$/i.test(away)) continue;
-    const t = ko.getTime();
-    if (t < start || t >= end) continue; // pas ce jour-là
-    const markets = baseMarkets(ev);
+  let leagueStop = false;
+
+  type Raw = { id: number; sport: string; league: string; home: string; away: string; kickoff: string; base: DayMatch["markets"] };
+  const raws: Raw[] = [];
+
+  await runPool(leagues, Math.min(concurrency, 4), async (lg) => {
+    if (leagueStop || Date.now() > deadline) {
+      leagueStop = true;
+      return;
+    }
+    try {
+      const json = await getJson(lineUrl(host, "GetChampZip", { champ: lg.li, top: false }));
+      for (const g of parseChampGames(json)) {
+        if (!g?.I || seen.has(g.I)) continue;
+        const home = (g.O1 ?? "").trim();
+        const away = (g.O2 ?? "").trim();
+        const ko = eventKickoff(g as never);
+        if (!home || !away || !ko) continue;
+        if (/^(à domicile|home)$/i.test(home) || /^(à l['’]extérieur|away)$/i.test(away)) continue;
+        const t = ko.getTime();
+        if (t < start || t >= end) continue;
+        seen.add(g.I);
+        raws.push({
+          id: g.I,
+          sport: (g.SN ?? g.SE ?? lg.sportName).trim(),
+          league: (g.L ?? g.LE ?? lg.name).trim() || "Autre",
+          home,
+          away,
+          kickoff: ko.toISOString(),
+          base: [],
+        });
+      }
+    } catch {
+      /* ligue indisponible */
+    }
+  });
+
+  raws.sort((a, b) => a.kickoff.localeCompare(b.kickoff));
+  for (const r of raws) {
+    const t = Date.parse(r.kickoff);
     matches.push({
-      id: ev.I,
-      sport: (ev.SN ?? ev.SE ?? "Sport").trim(),
-      league: (ev.L ?? "").trim() || "Autre",
-      home,
-      away,
-      kickoff: ko.toISOString(),
+      id: r.id,
+      sport: r.sport,
+      league: r.league,
+      home: r.home,
+      away: r.away,
+      kickoff: r.kickoff,
       started: t <= now,
-      live: eventLive(ev),
-      markets,
-      marketCount: markets.length,
+      live: t <= now && now - t < 3 * 3600_000, // le zip de ligue n'a pas de SC — approximation
+      markets: r.base,
+      marketCount: r.base.length,
       enriched: false,
     });
   }
-  matches.sort((a, b) => a.kickoff.localeCompare(b.kickoff));
-  onProgress(`${matches.length} matchs · enrichment des marchés…`);
+  onProgress(`${matches.length} matchs · enrichissement des marchés…`);
 
-  if (!matches.length) {
-    return emptyLine(opts.day, host, null);
-  }
+  if (!matches.length) return withStats(emptyLine(opts.day, host, null), matches);
 
-  // 2. Enrichissement : tous les marchés de chaque match (dans le budget).
+  /* Enrichissement : tous les marchés de chaque match, dans le budget. */
   const queue = matches.slice(0, maxMatches);
   let enriched = 0;
-  let idx = 0;
-  let stopped = false;
-
-  const worker = async () => {
-    while (true) {
-      if (stopped || Date.now() > deadline) {
-        stopped = true;
-        return;
-      }
-      const i = idx++;
-      if (i >= queue.length) return;
-      const m = queue[i];
-      try {
-        const json = await getJson(
-          lineUrl(host, "GetGameZip", {
-            id: m.id,
-            lng: "fr",
-            isSubGames: true,
-            GroupEvents: true,
-          }),
-        );
-        const parsed = parseGame(json);
-        if (parsed) {
-          const markets = marketsFromGameZip(json, m.home, m.away);
-          if (markets.length) {
-            m.markets = markets;
-            m.marketCount = markets.length;
-            m.enriched = true;
-            enriched += 1;
-          }
-        }
-      } catch {
-        /* ce match garde ses cotes de base */
-      }
+  let stop = false;
+  await runPool(queue, concurrency, async (m) => {
+    if (stop || Date.now() > deadline) {
+      stop = true;
+      return;
     }
-  };
-  await Promise.all(Array.from({ length: Math.min(concurrency, queue.length) }, worker));
+    try {
+      const json = await getJson(gameZipUrl(host, m.id));
+      const markets = marketsFromGameZip(json, m.home, m.away);
+      if (markets.length) {
+        m.markets = markets;
+        m.marketCount = markets.length;
+        m.enriched = true;
+        enriched += 1;
+      }
+    } catch {
+      /* le match garde ses cotes de base */
+    }
+  });
 
   const partial = enriched < matches.length;
-  if (partial) {
-    onProgress(`${enriched}/${matches.length} matchs enrichis (budget temps)`);
-  }
-
-  const leagues = groupLeagues(matches);
-  return {
+  const line: DayLine = {
     day: opts.day,
     generatedAt: new Date().toISOString(),
     host,
     stats: {
       matches: matches.length,
-      leagues: leagues.length,
+      leagues: 0,
       markets: matches.reduce((a, m) => a + m.marketCount, 0),
       enriched,
     },
     partial,
     error: null,
-    leagues,
+    leagues: [],
   };
+  line.leagues = groupLeagues(matches);
+  line.stats.leagues = line.leagues.length;
+  return line;
+}
+
+async function runPool<T>(items: T[], n: number, fn: (item: T) => Promise<void>) {
+  let i = 0;
+  async function worker() {
+    while (i < items.length) {
+      const idx = i++;
+      await fn(items[idx]);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(n, items.length) }, worker));
 }
 
 function groupLeagues(matches: DayMatch[]): DayLeague[] {
@@ -159,9 +158,7 @@ function groupLeagues(matches: DayMatch[]): DayLeague[] {
     l.matches.push(m);
   }
   const leagues = [...map.values()];
-  for (const l of leagues) {
-    l.matches.sort((a, b) => a.kickoff.localeCompare(b.kickoff));
-  }
+  for (const l of leagues) l.matches.sort((a, b) => a.kickoff.localeCompare(b.kickoff));
   leagues.sort((a, b) => {
     const fa = a.sport.toLowerCase() === "football" ? 0 : 1;
     const fb = b.sport.toLowerCase() === "football" ? 0 : 1;
@@ -189,7 +186,12 @@ function emptyLine(day: string, host: string | null, error: string | null): DayL
   };
 }
 
-/** Scan serveur avec le getter natif (fetch + headers feed). */
+function withStats(line: DayLine, matches: DayMatch[]): DayLine {
+  line.stats.matches = matches.length;
+  return line;
+}
+
+/** Scan serveur avec le getter natif. */
 export async function scanDayNative(opts: DayOptions) {
   return scrapeDay(getJsonNative, opts);
 }
