@@ -1,13 +1,13 @@
 # NINETY — paniers 1,01
 
-App téléphone. Tu ouvres, tu vois les paniers 1xBet, tu recopies.
+App téléphone. Un seul écran : paniers + bouton scan.
 
 - Cotes **réelles** 1xBet (pré-match). Hosts : `1xbet.ci`, `1xbet.com`, fallback `linebet.com` (même moteur BetB2B).
-- **Journée** : toutes les ligues qui jouent, chaque match avec heure et **tous ses marchés** (`/journee`).
-- Bande **1,007 – 1,01**. Une cote par match, la plus proche de 1,01.
+- **Un seul écran** : l'accueil = paniers + bouton **Scanner 1xBet** + bouton **Actualiser** (2 onglets : Paniers, Infos).
+- Le scan lit **tous les marchés** de chaque match **pas encore commencé** (jamais en live) et en sort la bande **1,007 – 1,01** — une cote par match, la plus proche de 1,01.
 - **50 sélections max** / panier (plafond 1xBet). **5 paniers / jour**.
 - 50 × 1,01 ≈ **1,64**. Pas de cible 10.
-- Purge auto si un match du panier a commencé.
+- **Purge** : un match commence → son panier saute (à l'ouverture + bouton Actualiser). Que des matchs pas encore commencés.
 - **Pas de login 1xBet. Pas de mise auto.** Mise mini = génération de code, à la main.
 
 ## Lancer
@@ -19,14 +19,11 @@ npm run dev    # 0.0.0.0:3000
 
 Sur le téléphone : ouvrir l’URL → Accueil = paniers. Ajouter à l’écran d’accueil (PWA).
 
-## Journée (toutes ligues, tous marchés)
+## Journée (moteur interne, pas d'UI)
 
-`GET /api/xbet/day?day=YYYY-MM-DD` (& `&refresh=1` pour forcer) :
+Le scan doit couvrir **toutes les ligues qui jouent le jour désigné** : `GET /api/xbet/day?day=YYYY-MM-DD` (& `&refresh=1`) fait la liste complète par sport puis enrichit chaque match avec **tous ses marchés** (groupes nommés, sous-groupes, codes inconnus, cotes `CV` string). Cette mécanique alimente la détection de bande — elle n'est plus affichée dans l'app (l'UI « tous les marchés » a été retirée : le scan lit tout, l'utilisateur ne voit que les paniers).
 
-1. liste complète par sport (`Get1x2_VZip`) → toutes les ligues du jour, triées football d'abord ;
-2. pour chaque match, `GetGameZip` → **tous les marchés** (groupes nommés, sous-groupes, codes inconnus labellisés, cotes `CV` string lues).
-
-Robustesse : budget temps global (38 s, réponse < 60 s), un zip qui échoue → le match garde ses cotes 1/N/2 (`partial: true` signalé), cache 3 min (`cached: true`), **un scrape raté n'écrase jamais la dernière bonne ligne**, un seul scrape simultané par jour (double-clic OK). Pages : `/journee` (ligues) et `/journee/[id]` (tous les marchés d'un match).
+Robustesse : budget temps global (38 s, réponse < 60 s), un zip en échec → cotes de base (`partial: true`), cache 3 min, **un scrape raté n'écrase jamais la dernière bonne ligne**, un seul scrape simultané par jour.
 
 ## Scan
 
@@ -49,6 +46,6 @@ L’état est persisté `data/paniers.json` → `/tmp` → mémoire (le FS Verce
 ```bash
 node scripts/mock-xbet-feed.mjs &                 # faux feed 1xBet (gate 406, journée complète, pannes simulées)
 XBET_FEED_HOSTS=http://localhost:8787 npm run build && npm run start
-bash scripts/test-scan.sh http://127.0.0.1:3000   # 20 assertions — paniers 1,01
-bash scripts/test-day.sh  http://127.0.0.1:3000   # 39 assertions — journée (données, marchés, cache, pannes, UI)
+bash scripts/test-scan.sh http://127.0.0.1:3000   # accueil fusionné, scan, purge des commencés, paniers
+bash scripts/test-day.sh  http://127.0.0.1:3000   # moteur journée (données, marchés, cache, pannes)
 ```

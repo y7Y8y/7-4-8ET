@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
 
 export default function InfosPage() {
   const [link, setLink] = useState("");
@@ -44,17 +43,21 @@ export default function InfosPage() {
           {link && <p className="mt-2 break-all text-[11px] text-mist/80">{link}</p>}
         </li>
         <li className="rounded-2xl border border-white/8 bg-ink-800/40 p-4">
-          <p className="text-paper">2. La journée</p>
+          <p className="text-paper">2. Scanner (sur l&apos;accueil)</p>
           <p className="mt-1">
-            L&apos;onglet <Link href="/journee" className="text-lime">Journée</Link> montre toutes les ligues qui jouent aujourd&apos;hui (ou hier/demain) : heure de chaque match, cotes, et tous ses marchés en appuyant dessus. Bouton{" "}
-            <span className="text-paper">Actualiser</span> pour relire 1xBet.
+            Le bouton vert <span className="text-paper">Scanner 1xBet</span> est directement sur l&apos;accueil, en
+            haut. Le scan lit <span className="text-paper">tous les marchés</span> de chaque match{" "}
+            <span className="text-paper">pas encore commencé</span> (jamais en live), et en sort les cotes de la
+            bande choisie — la plus proche de 1,01 par match. Réglages (cote min/max, sélections, paniers) sous
+            « Réglages du scan ».
           </p>
         </li>
         <li className="rounded-2xl border border-white/8 bg-ink-800/40 p-4">
-          <p className="text-paper">3. Scanner (paniers 1,01)</p>
+          <p className="text-paper">3. Matchs commencés</p>
           <p className="mt-1">
-            En bas, appuie <Link href="/scan" className="text-lime">Scanner</Link>, puis le bouton vert{" "}
-            <span className="text-paper">Lancer le scan</span>. Ça lit 1xBet (1xbet.ci). 1–2 min. Ensuite tu reviens sur Paniers.
+            Un match commence → son panier saute tout seul à l&apos;ouverture de l&apos;app. Le bouton{" "}
+            <span className="text-paper">Actualiser</span> nettoie et recharge à la demande : que des matchs pas
+            encore commencés, toujours.
           </p>
         </li>
         <li className="rounded-2xl border border-white/8 bg-ink-800/40 p-4">

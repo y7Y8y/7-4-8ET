@@ -23,10 +23,13 @@ TOMORROW=$(node -e "console.log(require('/tmp/days.json').tomorrow)")
 YESTERDAY=$(node -e "console.log(require('/tmp/days.json').yesterday)")
 echo "── jours: hier=$YESTERDAY aujourd'hui=$TODAY demain=$TOMORROW"
 
-echo "── 1. Page /journee (avant toute donnée : elle doit s'afficher)"
-CODE=$(curl -s -o /tmp/journee.html -w "%{http_code}" --max-time 60 "$BASE/journee")
-check "GET /journee" 200 "$CODE"
-grep -q "La journée" /tmp/journee.html && check "titre présent" yes yes || check "titre présent" yes no
+echo "── 1. Plus d'UI « tous les marchés » : /journee et /scan rentrent à l'accueil"
+CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 30 "$BASE/journee")
+check "/journee → /" 307 "$CODE"
+CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 30 "$BASE/scan")
+check "/scan → /" 307 "$CODE"
+CODE=$(curl -s -o /tmp/home.html -w "%{http_code}" --max-time 30 "$BASE/")
+check "GET / (accueil fusionné)" 200 "$CODE"
 
 echo "── 2. GET /api/xbet/day?refresh=1 (scrape complet du jour)"
 T0=$(date +%s%N)
@@ -115,13 +118,10 @@ check "2e appel servi du cache" true "$(node -e "$J console.log(j.cached)" /tmp/
 [ "$MS" -lt 500 ] && check "cache instantané (${MS} ms)" yes yes || check "cache instantané" yes "no(${MS}ms)"
 check "generatedAt identique (pas de re-scrape)" "$G1" "$(node -e "$J console.log(j.line.generatedAt)" /tmp/day4.json)"
 
-echo "── 8. Page détail d'un match (tous les marchés affichés)"
-MID=$(node -e "$J console.log(j.line.leagues[0].matches[0].id)" /tmp/day1.json)
-CODE=$(curl -s -o /tmp/detail.html -w "%{http_code}" --max-time 30 "$BASE/journee/$MID?day=$TODAY")
-check "GET /journee/$MID" 200 "$CODE"
-grep -q "Double chance" /tmp/detail.html && check "marchés affichés (Double chance)" yes yes || check "marchés affichés" yes no
-CODE=$(curl -s -o /tmp/detail404.html -w "%{http_code}" --max-time 30 "$BASE/journee/999999999")
-check "match inconnu → état « introuvable »" yes "$(grep -q "Match introuvable" /tmp/detail404.html && echo yes || echo no)"
+echo "── 8. API robuste : jour invalide → aujourd'hui"
+CODE=$(curl -s -o /tmp/dayinv.json -w "%{http_code}" --max-time 70 "$BASE/api/xbet/day?day=pasundate")
+check "jour invalide → 200" 200 "$CODE"
+check "retombe sur aujourd'hui ($TODAY)" "$TODAY" "$(node -e "$J console.log(j.line?.day ?? 'null')" /tmp/dayinv.json)"
 
 echo "── 9. 1xBet tombe en panne → la dernière bonne ligne est conservée"
 GEN_BEFORE=$(node -e "$J console.log(j.line.generatedAt)" /tmp/day4.json)

@@ -12,6 +12,9 @@ const nextConfig: NextConfig = {
       { source: "/championnats", destination: "/infos", permanent: false },
       { source: "/matchs", destination: "/", permanent: false },
       { source: "/matchs/:id", destination: "/", permanent: false },
+      { source: "/scan", destination: "/", permanent: false },
+      { source: "/journee", destination: "/", permanent: false },
+      { source: "/journee/:id", destination: "/", permanent: false },
     ];
   },
   images: {
