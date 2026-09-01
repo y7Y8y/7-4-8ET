@@ -48,22 +48,20 @@ export default function InfosPage() {
             Le bouton vert <span className="text-paper">Scanner 1xBet</span> est directement sur l&apos;accueil, en
             haut. Le scan lit <span className="text-paper">tous les marchés</span> de chaque match{" "}
             <span className="text-paper">pas encore commencé</span> (jamais en live), et en sort les cotes de la
-            bande <span className="text-paper">stricte 1,007 – 1,01</span> — la plus proche de 1,01 par match.
-            Cette bande n&apos;est <span className="text-paper">jamais élargie automatiquement</span> : s&apos;il
-            manque des matchs, tu en as moins, jamais du 1,02. Toi seul peux la déplacer dans « Réglages du scan »
-            (cote min/max, sélections, paniers). La{" "}
-            <span className="text-paper">fenêtre de jours</span> (Aujourd&apos;hui, Demain, 3 jours, 7 jours,
-            Tous) se règle juste sous le bouton.
+            bande choisie — la plus proche de 1,01 par match.
+          </p>
+          <p className="mt-2">
+            <span className="text-paper">Choisir le ou les jours</span> : l&apos;icône de calendrier en haut à droite
+            — un clic sur une date, ou deux clics (départ puis arrivée) pour une plage. Les réglages et les règles du
+            scan sont derrière le <span className="text-paper">☰ en haut à gauche</span>.
           </p>
         </li>
         <li className="rounded-2xl border border-white/8 bg-ink-800/40 p-4">
-          <p className="text-paper">3. Matchs commencés — purge au match près</p>
+          <p className="text-paper">3. Matchs commencés</p>
           <p className="mt-1">
-            Un match commence → <span className="text-paper">cette sélection</span> sort du panier, pas le panier
-            entier. Le reste reste jouable et la cote totale est recalculée sur les sélections qui restent. Un
-            panier ne disparaît que s&apos;il est vidé. Le bouton{" "}
-            <span className="text-paper">Actualiser</span> nettoie à la demande — que des matchs pas encore
-            commencés, toujours.
+            Un match commence → son panier saute tout seul à l&apos;ouverture de l&apos;app. Le bouton{" "}
+            <span className="text-paper">Actualiser</span> nettoie et recharge à la demande : que des matchs pas
+            encore commencés, toujours.
           </p>
         </li>
         <li className="rounded-2xl border border-white/8 bg-ink-800/40 p-4">
@@ -75,8 +73,12 @@ export default function InfosPage() {
           <p className="mt-1">Uniquement ce que tu retrouves sur 1xBet : 1 / Nul / 2, handicap (+1), plus/moins de buts. Plus de code du style « marché 206 ».</p>
         </li>
         <li className="rounded-2xl border border-white/8 bg-ink-800/40 p-4">
-          <p className="text-paper">50 × 1,01 ≈ 1,64 · 5 paniers / jour</p>
-          <p className="mt-1">Match commencé = sélection retirée, cote du panier recalculée.</p>
+          <p className="text-paper">Chaque panier ≥ 1,50 · 50 × 1,01 ≈ 1,64</p>
+          <p className="mt-1">
+            Un panier ne sert à rien s&apos;il n&apos;atteint pas la cote totale visée (1,50 par défaut, réglable
+            dans le ☰) : s&apos;il n&apos;y a pas assez de matchs, un seul panier regroupe tout au lieu d&apos;en
+            empiler plusieurs à 1,05. Et si un match a commencé, le panier saute tout seul.
+          </p>
         </li>
       </ol>
       <p className="text-xs text-mist">

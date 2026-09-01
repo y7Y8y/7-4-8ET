@@ -1,24 +1,35 @@
 import { NextResponse } from "next/server";
-import { normalizeParams } from "@/lib/xbet/params";
 import { buildPaniers } from "@/lib/xbet/pack";
-import { filterBand } from "@/lib/xbet/parse";
+import { daysKey } from "@/lib/xbet/days";
+import { normalizeParams } from "@/lib/xbet/params";
 import { writePaniers } from "@/lib/xbet/store";
-import { isStrictBand, type ScanParams, type XbetLeg } from "@/lib/xbet/types";
+import { isStrictBand, type XbetLeg } from "@/lib/xbet/types";
 
 export const dynamic = "force-dynamic";
 
+/** Le téléphone renvoie les jambes trouvées → paniers ≥ minProduct + état persisté. */
 export async function POST(req: Request) {
-  const body = (await req.json()) as {
+  let body: {
     legs?: XbetLeg[];
     host?: string | null;
-    params?: Partial<ScanParams>;
+    params?: Record<string, unknown>;
+    days?: unknown;
     error?: string | null;
   };
+  try {
+    body = (await req.json()) as typeof body;
+  } catch {
+    body = {};
+  }
   const params = normalizeParams(body.params);
   // Le téléphone n'a pas plus le droit que le serveur d'élargir la bande.
-  const legs = filterBand(Array.isArray(body.legs) ? body.legs : [], params);
-  const paniers = buildPaniers(legs, params);
+  const legs = Array.isArray(body.legs) ? body.legs : [];
+  // `days` au niveau du corps gagne, sinon ceux des params, sinon aujourd'hui.
+  const explicitDays = normalizeDaysInput(body.days);
+  const days = explicitDays.length ? explicitDays : params.days;
+  const paniers = buildPaniers(legs, params, daysKey(days));
   const state = await writePaniers({
+    days,
     host: body.host ?? null,
     pool: legs.length,
     paniers,
@@ -30,4 +41,10 @@ export async function POST(req: Request) {
     params,
     strictBand: isStrictBand(params),
   });
+}
+
+function normalizeDaysInput(input: unknown): string[] {
+  if (Array.isArray(input)) return input.filter((d) => typeof d === "string") as string[];
+  if (typeof input === "string" && input) return input.split(",").map((s) => s.trim()).filter(Boolean);
+  return [];
 }

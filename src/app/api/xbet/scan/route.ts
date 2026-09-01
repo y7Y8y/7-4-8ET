@@ -1,20 +1,22 @@
 import { NextResponse } from "next/server";
-import { normalizeParams, paramsFromQuery } from "@/lib/xbet/params";
 import { buildPaniers } from "@/lib/xbet/pack";
+import { daysKey } from "@/lib/xbet/days";
+import { normalizeParams, paramsFromQuery } from "@/lib/xbet/params";
 import { getJsonNative, scrapeXbet } from "@/lib/xbet/scrape";
 import { writePaniers } from "@/lib/xbet/store";
-import { isStrictBand, type Panier, type ScanParams, type XbetState } from "@/lib/xbet/types";
+import { isStrictBand, type ScanParams, type XbetState } from "@/lib/xbet/types";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 /**
- * POST /api/xbet/scan   — corps JSON { oddMin, oddMax, bufferMin, maxLegs, maxPaniers, days }
- * GET  /api/xbet/scan   — mêmes paramètres en query (?days=3d&oddMax=1.01&dry=1)
+ * POST /api/xbet/scan — corps JSON { oddMin, oddMax, minProduct, bufferMin,
+ * maxLegs, maxPaniers, days: ["YYYY-MM-DD"… | "today" | "3d" | "all"] }
+ * GET  /api/xbet/scan — mêmes paramètres en query (?days=3d&minProduct=1.5&dry=1)
  *
- * `dry=1` (ou `save=0`) : scanne et renvoie le résultat SANS toucher aux
- * paniers enregistrés — pratique pour regarder ce que donnerait une autre
- * fenêtre de jours sans casser les paniers du téléphone.
+ * `days` = dates ISO du calendrier (1 clic = date, 2 clics = plage), ou
+ * préréglage. Chaque panier produit atteint `minProduct` (1,50 par défaut) —
+ * sinon un seul panier regroupe tout, jamais de panier « filler ».
  */
 export async function GET(req: Request) {
   const q = new URL(req.url).searchParams;
@@ -30,7 +32,9 @@ export async function POST(req: Request) {
 
 async function run(params: ScanParams, save: boolean) {
   // Budget interne : répondre AVANT le timeout client (50 s) et le plafond Vercel (60 s).
-  const scan = await scrapeXbet(getJsonNative, params, () => undefined, { budgetMs: 40_000 });
+  const scan = await scrapeXbet(getJsonNative, params, () => undefined, {
+    budgetMs: 40_000,
+  });
   const meta = {
     params,
     strictBand: isStrictBand(params),
@@ -44,23 +48,25 @@ async function run(params: ScanParams, save: boolean) {
       fallback: true,
       error: scan.error,
       ...meta,
-      scan: { host: scan.host, events: scan.events, games: scan.games, pool: 0, ...meta },
+      scan: { host: scan.host, events: scan.events, games: scan.games, pool: 0, saved: false },
       state: null,
     });
   }
 
-  const paniers = buildPaniers(scan.legs, params);
+  const paniers = buildPaniers(scan.legs, params, daysKey(params.days));
   let state: XbetState = {
-    day: new Date().toISOString().slice(0, 10),
+    day: daysKey(params.days),
+    days: params.days,
     scannedAt: new Date().toISOString(),
     host: scan.host,
     pool: scan.legs.length,
-    paniers: paniers as Panier[],
+    paniers,
     error: null,
   };
   if (save) {
     try {
       state = await writePaniers({
+        days: params.days,
         host: scan.host,
         pool: scan.legs.length,
         paniers,
@@ -82,14 +88,14 @@ async function run(params: ScanParams, save: boolean) {
       events: scan.events,
       games: scan.games,
       pool: scan.legs.length,
-      ...meta,
+      saved: meta.saved,
     },
   });
 }
 
 async function readParams(req: Request): Promise<ScanParams> {
   try {
-    const body = (await req.json()) as Partial<ScanParams>;
+    const body = (await req.json()) as Record<string, unknown>;
     return normalizeParams(body);
   } catch {
     return normalizeParams(null);

@@ -2,7 +2,8 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { ymd } from "../format";
-import { purgeStarted, purgeStartedDetailed } from "./pack";
+import { daysKey, normalizeDays } from "./days";
+import { purgeStartedDetailed } from "./pack";
 import type { Panier, XbetState } from "./types";
 
 /**
@@ -79,14 +80,20 @@ export async function saveState(state: XbetState) {
   await persist(state);
 }
 
-/** État courant + purge AU MATCH PRÈS (jambe commencée retirée, panier gardé). */
-export async function liveState(): Promise<{ state: XbetState; purge: { legs: number; paniers: number; reduits: number } }> {
+/**
+ * État courant + purge AU MATCH PRÈS : la jambe commencée saute, le panier
+ * reste jouable avec sa cote recalculée. Les paniers des AUTRES jours ne sont
+ * jamais effacés — seule la purge par coup d'envoi décide.
+ */
+export async function liveState(): Promise<{
+  state: XbetState;
+  purge: { legs: number; paniers: number; reduits: number };
+}> {
   const state = await loadState();
-  const today = ymd();
   const report = purgeStartedDetailed(state.paniers);
   const next: XbetState = {
     ...state,
-    day: today,
+    day: state.day || ymd(),
     paniers: report.paniers,
     error: null,
   };
@@ -98,17 +105,21 @@ export async function liveState(): Promise<{ state: XbetState; purge: { legs: nu
 }
 
 export async function writePaniers(partial: {
+  days?: string[];
   host: string | null;
   pool: number;
   paniers: Panier[];
   error: string | null;
 }) {
+  const days = normalizeDays(partial.days ?? []);
+  const report = purgeStartedDetailed(partial.paniers);
   const next: XbetState = {
-    day: ymd(),
+    day: daysKey(days),
+    days,
     scannedAt: new Date().toISOString(),
     host: partial.host,
     pool: partial.pool,
-    paniers: purgeStarted(partial.paniers),
+    paniers: report.paniers,
     error: partial.error,
   };
   await saveState(next);

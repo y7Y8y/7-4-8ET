@@ -1,22 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { ChevronDown, Copy, Radar, RefreshCw, RotateCcw, Settings2, Trash2 } from "lucide-react";
-import { fmtKick, odds3 } from "@/lib/format";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { ChevronDown, Copy, Radar, RefreshCw, Trash2 } from "lucide-react";
+import { fmtKick, odds3, oddsFr, ymd } from "@/lib/format";
 import { buildPaniers, couponText, purgeStartedDetailed } from "@/lib/xbet/pack";
+import { daysKey, daysLabel, keyLabel } from "@/lib/xbet/days";
 import { clientScrape } from "@/lib/xbet/client-scan";
-import { normalizeParams } from "@/lib/xbet/params";
-import { loadLocalState, loadParams, saveLocalState, saveParams } from "@/lib/xbet/local";
-import {
-  DAY_WINDOWS,
-  SCAN_DEFAULTS,
-  STRICT_BAND,
-  isStrictBand,
-  type DayWindow,
-  type Panier,
-  type ScanParams,
-  type XbetState,
-} from "@/lib/xbet/types";
+import { loadLocalState, saveLocalState } from "@/lib/xbet/local";
+import { useScanConfig } from "./scan-config";
+import type { Panier, XbetState } from "@/lib/xbet/types";
 
 const empty: XbetState = {
   day: "",
@@ -28,18 +20,21 @@ const empty: XbetState = {
 };
 
 export function PaniersDesk() {
+  const { params, days } = useScanConfig();
   const [state, setState] = useState<XbetState>(empty);
-  const [params, setParams] = useState<ScanParams>(SCAN_DEFAULTS);
-  const [showParams, setShowParams] = useState(false);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("Prêt.");
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
-  const strict = isStrictBand(params);
+  // L'auto-ouverture du 1er panier ne doit jouer qu'une fois : sans ça, replier
+  // le panier 1 le rouvrait aussitôt (impossible de le dérouler).
+  const touchedRef = useRef(false);
 
-  /** Recharge l'état + purge les matchs commencés. announce=true → message visible. */
+  const scanDays = days.length ? days : [ymd()];
+
+  /** Recharge l'état + purge AU MATCH PRÈS (la jambe commencée saute, le reste du panier reste). */
   const refresh = useCallback(async (announce: boolean) => {
     try {
       const res = await fetch("/api/xbet/paniers", { cache: "no-store" });
@@ -50,7 +45,9 @@ export function PaniersDesk() {
         const cleaned = { ...merged, paniers: report.paniers };
         setState(cleaned);
         saveLocalState(cleaned);
-        if (announce) setNote(purgeNote(report.legs, report.paniers_supprimes));
+        if (announce) {
+          setNote(purgeNote(report.legs, report.paniers_supprimes, report.paniers_reduits));
+        }
       }
     } catch {
       const local = loadLocalState();
@@ -59,47 +56,35 @@ export function PaniersDesk() {
         const cleaned = { ...local, paniers: report.paniers };
         setState(cleaned);
         saveLocalState(cleaned);
-        if (announce) setNote(purgeNote(report.legs, report.paniers_supprimes));
       }
     }
   }, []);
 
   useEffect(() => {
-    setParams(loadParams());
     const local = loadLocalState();
     if (local) setState(local);
     void refresh(false);
   }, [refresh]);
 
   useEffect(() => {
-    if (!open && state.paniers[0]) setOpen(state.paniers[0].id);
+    if (!touchedRef.current && !open && state.paniers[0]) setOpen(state.paniers[0].id);
   }, [state.paniers, open]);
 
-  function patch(p: Partial<ScanParams>) {
-    const next = normalizeParams({ ...params, ...p });
-    setParams(next);
-    saveParams(next);
-  }
-
-  /** Bande stricte 1,007–1,01 : jamais élargie toute seule, seulement ici. */
-  function resetBand() {
-    patch({ oddMin: STRICT_BAND.oddMin, oddMax: STRICT_BAND.oddMax });
-  }
-
-  /** Le scan : lit TOUS les marchés de chaque match pas encore commencé,
-   *  en garde la cote dans la bande (la plus proche de 1,01), fabrique les paniers. */
+  /** Le scan : lit TOUS les marchés de chaque match pas encore commencé des jours
+   *  choisis, garde la cote dans la bande (la plus proche du haut de bande),
+   *  fabrique des paniers qui atteignent CHACUN la cote totale minimale. */
   async function run() {
     setBusy(true);
     setError(null);
     setNote(null);
-    setMsg(`Serveur → 1xbet.ci / 1xbet.com… · ${windowLabel(params.days)}`);
+    setMsg(`Serveur → 1xbet.ci / 1xbet.com · ${daysLabel(scanDays)}…`);
     try {
       const ctrl = new AbortController();
       const t = setTimeout(() => ctrl.abort(), 50_000);
       const res = await fetch("/api/xbet/scan", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(params),
+        body: JSON.stringify({ ...params, days: scanDays }),
         signal: ctrl.signal,
       }).catch(() => null);
       clearTimeout(t);
@@ -112,13 +97,11 @@ export function PaniersDesk() {
             } | null)
         : null;
       if (json?.ok && json.state?.paniers?.length) {
-        saveLocalState(json.state);
-        setState(json.state);
-        setMsg(`${json.state.paniers.length} paniers prêts.`);
+        announce(json.state);
         return;
       }
       setMsg("Serveur bloqué par 1xBet. Scan depuis le téléphone…");
-      const scan = await clientScrape(params, (m) => setMsg(m));
+      const scan = await clientScrape({ ...params, days: scanDays }, (m) => setMsg(m));
       if (!scan.legs.length) {
         setError(
           scan.error ??
@@ -127,9 +110,10 @@ export function PaniersDesk() {
         );
         return;
       }
-      const paniers = buildPaniers(scan.legs, params);
+      const paniers = buildPaniers(scan.legs, scan.params, daysKey(scanDays));
       const local: XbetState = {
-        day: new Date().toISOString().slice(0, 10),
+        day: daysKey(scanDays),
+        days: scanDays,
         scannedAt: new Date().toISOString(),
         host: scan.host,
         pool: scan.legs.length,
@@ -137,22 +121,34 @@ export function PaniersDesk() {
         error: null,
       };
       saveLocalState(local);
-      setState(local);
+      announce(local);
       try {
         await fetch("/api/xbet/ingest", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ legs: scan.legs, host: scan.host, params }),
+          body: JSON.stringify({ legs: scan.legs, host: scan.host, params: scan.params, days: scanDays }),
         });
       } catch {
         /* local suffit */
       }
-      setMsg(`${paniers.length} paniers · ${scan.legs.length} matchs`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Scan interrompu");
     } finally {
       setBusy(false);
     }
+  }
+
+  function announce(next: XbetState) {
+    touchedRef.current = false;
+    setOpen(null);
+    saveLocalState(next);
+    setState(next);
+    const used = next.paniers.reduce((a, p) => a + p.legs.length, 0);
+    setMsg(
+      next.paniers.length
+        ? `${next.paniers.length} panier${next.paniers.length > 1 ? "s" : ""} ≥ ${oddsFr(params.minProduct)} · ${used}/${next.pool} matchs utilisés`
+        : "Aucun panier — pas assez de matchs.",
+    );
   }
 
   async function drop(id: string) {
@@ -179,15 +175,16 @@ export function PaniersDesk() {
   return (
     <div className="space-y-4">
       <div>
-        <p className="text-[11px] uppercase tracking-[0.28em] text-lime">Aujourd&apos;hui</p>
+        <p className="text-[11px] uppercase tracking-[0.28em] text-lime">{daysLabel(scanDays)}</p>
         <h1 className="mt-1 font-display text-3xl font-semibold">Tes combinés 1,01</h1>
         <p className="mt-2 text-xs text-mist">
-          {state.host ? new URL(state.host).hostname : "1xBet"}
+          <span className="text-paper">{keyLabel(state.day)}</span>
+          {state.host ? ` · ${new URL(state.host).hostname}` : ""}
           {state.scannedAt ? ` · scanné ${fmtKick(state.scannedAt)}` : ""} · {state.pool} matchs en bande
         </p>
       </div>
 
-      {/* ── Scanner (fusionné ici, plus d'onglet séparé) ── */}
+      {/* ── Scan (les réglages sont dans le ☰ en haut à gauche) ── */}
       <div className="space-y-3 rounded-3xl border border-white/10 bg-ink-800/50 p-4">
         <button
           type="button"
@@ -198,120 +195,18 @@ export function PaniersDesk() {
           <Radar size={16} className={busy ? "animate-spin" : ""} />
           {busy ? "Scan en cours…" : "Scanner 1xBet"}
         </button>
-        <div>
-          <p className="mb-1.5 text-[10px] uppercase tracking-[0.2em] text-mist">Fenêtre de jours</p>
-          <div className="flex gap-1.5 overflow-x-auto pb-0.5">
-            {DAY_WINDOWS.map((w) => (
-              <button
-                key={w.id}
-                type="button"
-                disabled={busy}
-                onClick={() => patch({ days: w.id })}
-                className={`shrink-0 rounded-full border px-3 py-1.5 text-[11px] font-semibold transition disabled:opacity-50 ${
-                  params.days === w.id
-                    ? "border-lime bg-lime/15 text-lime"
-                    : "border-white/12 text-mist"
-                }`}
-              >
-                {w.label}
-              </button>
-            ))}
-          </div>
-        </div>
         <p className="text-center text-xs text-mist">{msg}</p>
+        <p className="text-center text-[11px] text-mist/80">
+          Cible : <span className="text-paper">{daysLabel(scanDays)}</span> — change avec le calendrier en haut à
+          droite (1 clic = date, 2 clics = plage).
+        </p>
         {error && (
           <p className="rounded-xl border border-live/30 bg-live/10 px-3 py-2 text-xs text-live">{error}</p>
         )}
-        <button
-          type="button"
-          onClick={() => setShowParams((v) => !v)}
-          className="mx-auto flex items-center gap-1.5 text-[11px] text-mist"
-        >
-          <Settings2 size={12} /> Réglages du scan
-        </button>
-        {showParams && (
-          <div className="space-y-3">
-            <div className="flex items-center justify-between gap-2">
-              <p className="text-[11px] text-mist">
-                Bande{" "}
-                <span className={strict ? "text-lime" : "text-live"}>
-                  {odds3(params.oddMin)} – {odds3(params.oddMax)}
-                </span>
-                {strict ? " · stricte" : " · modifiée par toi"}
-              </p>
-              {!strict && (
-                <button
-                  type="button"
-                  onClick={resetBand}
-                  className="inline-flex items-center gap-1 rounded-full border border-lime/40 px-2.5 py-1 text-[10px] font-semibold text-lime"
-                >
-                  <RotateCcw size={11} /> Bande stricte
-                </button>
-              )}
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-            <label className="text-xs text-mist">
-              Cote min
-              <input
-                className="field mt-1"
-                type="number"
-                step="0.001"
-                min={1}
-                max={1.05}
-                value={params.oddMin}
-                onChange={(e) => patch({ oddMin: Number(e.target.value) })}
-              />
-            </label>
-            <label className="text-xs text-mist">
-              Cote max
-              <input
-                className="field mt-1"
-                type="number"
-                step="0.001"
-                min={1}
-                max={1.05}
-                value={params.oddMax}
-                onChange={(e) => patch({ oddMax: Number(e.target.value) })}
-              />
-            </label>
-            <label className="text-xs text-mist">
-              Sélections / panier
-              <input
-                className="field mt-1"
-                type="number"
-                min={1}
-                max={50}
-                value={params.maxLegs}
-                onChange={(e) => patch({ maxLegs: Math.min(50, Number(e.target.value) || 50) })}
-              />
-            </label>
-            <label className="text-xs text-mist">
-              Paniers / jour
-              <input
-                className="field mt-1"
-                type="number"
-                min={1}
-                max={8}
-                value={params.maxPaniers}
-                onChange={(e) => patch({ maxPaniers: Number(e.target.value) || 5 })}
-              />
-            </label>
-            </div>
-            <p className="text-[11px] leading-relaxed text-mist">
-              La bande n&apos;est <span className="text-paper">jamais élargie automatiquement</span> : s&apos;il
-              manque des matchs, le scan en trouve moins — il ne prend pas 1,02. Seules ces deux cases la
-              déplacent.
-            </p>
-          </div>
-        )}
         <p className="text-[11px] leading-relaxed text-mist">
-          Lit tous les marchés de chaque match <span className="text-paper">pas encore commencé</span> (jamais
-          en live) sur <span className="text-paper">{windowLabel(params.days).toLowerCase()}</span>, garde la
-          cote la plus proche de {odds3(params.oddMax)} dans la bande{" "}
-          <span className="text-lime">
-            {odds3(params.oddMin)} – {odds3(params.oddMax)}
-          </span>
-          . {params.maxLegs} × 1,01 ≈ <span className="text-lime">1,64</span>.
+          Chaque panier vise <span className="text-lime">{oddsFr(params.minProduct)}</span> de cote totale minimum —
+          sinon un seul panier regroupe tout. {params.maxLegs} sélections max (plafond 1xBet). Règles &amp; réglages :
+          ☰ en haut à gauche.
         </p>
       </div>
 
@@ -319,9 +214,9 @@ export function PaniersDesk() {
       <div className="flex items-center justify-between gap-3 rounded-2xl border border-white/8 bg-ink-800/40 px-4 py-3">
         <p className="text-xs text-mist">
           <span className="text-paper">
-            {state.paniers.length} / {params.maxPaniers} paniers
+            {state.paniers.length} panier{state.paniers.length > 1 ? "s" : ""}
           </span>{" "}
-          · un match commence → cette sélection saute, le reste du panier reste jouable
+          · un match commence → sa jambe saute, le reste reste jouable
         </p>
         <button
           type="button"
@@ -343,7 +238,10 @@ export function PaniersDesk() {
           <article key={b.id} className="overflow-hidden rounded-3xl border border-white/10 bg-ink-800/60">
             <button
               type="button"
-              onClick={() => setOpen(expanded ? null : b.id)}
+              onClick={() => {
+                touchedRef.current = true;
+                setOpen(expanded ? null : b.id);
+              }}
               className="flex w-full items-start justify-between gap-3 px-4 py-4 text-left"
             >
               <div>
@@ -406,17 +304,13 @@ export function PaniersDesk() {
   );
 }
 
-function windowLabel(days: DayWindow) {
-  return DAY_WINDOWS.find((w) => w.id === days)?.label ?? "Aujourd'hui";
-}
-
-/** Message de purge : on parle en sélections, plus en paniers entiers. */
-function purgeNote(legs: number, dropped: number) {
-  if (!legs && !dropped) return "À jour — aucun match commencé dans tes paniers.";
-  const parts: string[] = [];
-  if (legs) parts.push(`${legs} sélection${legs > 1 ? "s" : ""} retirée${legs > 1 ? "s" : ""} (match commencé)`);
-  if (dropped) parts.push(`${dropped} panier${dropped > 1 ? "s" : ""} vidé${dropped > 1 ? "s" : ""}`);
-  return `${parts.join(" · ")} — le reste reste jouable, cote recalculée.`;
+function purgeNote(legs: number, supprimes: number, reduits: number): string {
+  if (!legs && !supprimes && !reduits) return "À jour — aucun match commencé dans tes paniers.";
+  const bits: string[] = [];
+  if (legs) bits.push(`${legs} jambe${legs > 1 ? "s" : ""} retirée${legs > 1 ? "s" : ""} (match commencé)`);
+  if (reduits) bits.push(`${reduits} panier${reduits > 1 ? "s" : ""} réduit${reduits > 1 ? "s" : ""}`);
+  if (supprimes) bits.push(`${supprimes} panier${supprimes > 1 ? "s" : ""} supprimé${supprimes > 1 ? "s" : ""}`);
+  return `${bits.join(" · ")} — cotes recalculées.`;
 }
 
 function preferNewer(local: XbetState | null, server: XbetState): XbetState {
