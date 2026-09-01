@@ -1,5 +1,6 @@
 import { SPORT_IDS, feedHeaders, feedHosts, lineUrl } from "./hosts";
-import { isPrematch, legsFromEvent, onePerMatch, parseGame } from "./parse";
+import { eventKickoff, isPrematch, legsFromEvent, onePerMatch, parseGame } from "./parse";
+import { dayWindowsUtc, inDayWindows } from "./days";
 import { SCAN_DEFAULTS, type ScanParams, type XbetLeg } from "./types";
 
 export type Progress = (msg: string) => void;
@@ -149,13 +150,16 @@ export async function scrapeXbet(
   getJson: Getter,
   params: ScanParams = SCAN_DEFAULTS,
   onProgress: Progress = () => undefined,
-  opts: { hosts?: readonly string[]; maxLeagues?: number; maxGames?: number; concurrency?: number; budgetMs?: number } = {},
+  opts: { hosts?: readonly string[]; maxLeagues?: number; maxGames?: number; concurrency?: number; budgetMs?: number; days?: readonly string[] } = {},
 ): Promise<ScrapeResult> {
   const need = params.maxPaniers * params.maxLegs;
   const maxLeagues = opts.maxLeagues ?? 45;
   const maxGames = opts.maxGames ?? 140;
   const concurrency = opts.concurrency ?? 6;
   const deadline = Date.now() + (opts.budgetMs ?? 45_000);
+  // Fenêtres des jours choisis (calendrier) : sans filtre on garde le comportement
+  // historique (tout pré-match) ; avec un jour ou une plage on NE GARDE que ça.
+  const windows = dayWindowsUtc(opts.days ?? []);
 
   const picked = await pickHostWithTree(getJson, opts.hosts ?? feedHosts(), deadline - 8_000);
   if (!picked) {
@@ -195,6 +199,9 @@ export async function scrapeXbet(
         const away = (g.O2 ?? "").trim();
         if (!home || !away) continue;
         if (/^(à domicile|home)$/i.test(home) || /^(à l['’]extérieur|away)$/i.test(away)) continue;
+        const ko = eventKickoff(g as never);
+        if (!ko) continue;
+        if (windows.length && !inDayWindows(ko.getTime(), windows)) continue; // jour(s) choisi(s) seulement
         const ev = { ...g, L: g.L ?? g.LE ?? lg.name, SN: g.SN ?? g.SE ?? lg.sportName };
         if (!isPrematch(ev as never, params.bufferMin, now)) continue;
         seen.add(g.I);
@@ -215,7 +222,9 @@ export async function scrapeXbet(
       legs: [],
       events: 0,
       games: 0,
-      error: "Aucun match pas encore commencé pour l'instant. Réessaie plus tard.",
+      error: windows.length
+        ? `Aucun match pas encore commencé sur ${opts.days?.join(", ")}. Vérifie la date dans le calendrier.`
+        : "Aucun match pas encore commencé pour l'instant. Réessaie plus tard.",
     };
   }
 

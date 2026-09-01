@@ -1,12 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { ChevronDown, Copy, Radar, RefreshCw, Settings2, Trash2 } from "lucide-react";
-import { fmtKick, odds3 } from "@/lib/format";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { ChevronDown, Copy, Radar, RefreshCw, Trash2 } from "lucide-react";
+import { fmtKick, odds3, oddsFr, ymd } from "@/lib/format";
 import { buildPaniers, couponText, purgeStarted } from "@/lib/xbet/pack";
+import { daysKey, daysLabel, keyLabel } from "@/lib/xbet/days";
 import { clientScrape } from "@/lib/xbet/client-scan";
-import { loadLocalState, loadParams, saveLocalState, saveParams } from "@/lib/xbet/local";
-import { SCAN_DEFAULTS, type Panier, type ScanParams, type XbetState } from "@/lib/xbet/types";
+import { loadLocalState, saveLocalState } from "@/lib/xbet/local";
+import { useScanConfig } from "./scan-config";
+import type { Panier, XbetState } from "@/lib/xbet/types";
 
 const empty: XbetState = {
   day: "",
@@ -18,15 +20,19 @@ const empty: XbetState = {
 };
 
 export function PaniersDesk() {
+  const { params, days } = useScanConfig();
   const [state, setState] = useState<XbetState>(empty);
-  const [params, setParams] = useState<ScanParams>(SCAN_DEFAULTS);
-  const [showParams, setShowParams] = useState(false);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("Prêt.");
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  // L'auto-ouverture du 1er panier ne doit jouer qu'une fois : sans ça, replier
+  // le panier 1 le rouvrait aussitôt (impossible de le dérouler).
+  const touchedRef = useRef(false);
+
+  const scanDays = days.length ? days : [ymd()];
 
   /** Recharge l'état + purge les matchs commencés. announce=true → message visible. */
   const refresh = useCallback(async (announce: boolean) => {
@@ -59,36 +65,30 @@ export function PaniersDesk() {
   }, []);
 
   useEffect(() => {
-    setParams(loadParams());
     const local = loadLocalState();
     if (local) setState(local);
     void refresh(false);
   }, [refresh]);
 
   useEffect(() => {
-    if (!open && state.paniers[0]) setOpen(state.paniers[0].id);
+    if (!touchedRef.current && !open && state.paniers[0]) setOpen(state.paniers[0].id);
   }, [state.paniers, open]);
 
-  function patch(p: Partial<ScanParams>) {
-    const next = { ...params, ...p };
-    setParams(next);
-    saveParams(next);
-  }
-
-  /** Le scan : lit TOUS les marchés de chaque match pas encore commencé,
-   *  en garde la cote dans la bande (la plus proche de 1,01), fabrique les paniers. */
+  /** Le scan : lit TOUS les marchés de chaque match pas encore commencé des jours
+   *  choisis, garde la cote dans la bande (la plus proche de 1,01), fabrique des
+   *  paniers qui atteignent CHACUN la cote totale minimale. */
   async function run() {
     setBusy(true);
     setError(null);
     setNote(null);
-    setMsg("Serveur → 1xbet.ci / 1xbet.com…");
+    setMsg(`Serveur → 1xbet.ci / 1xbet.com · ${daysLabel(scanDays)}…`);
     try {
       const ctrl = new AbortController();
       const t = setTimeout(() => ctrl.abort(), 50_000);
       const res = await fetch("/api/xbet/scan", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(params),
+        body: JSON.stringify({ ...params, days: scanDays }),
         signal: ctrl.signal,
       }).catch(() => null);
       clearTimeout(t);
@@ -101,13 +101,11 @@ export function PaniersDesk() {
             } | null)
         : null;
       if (json?.ok && json.state?.paniers?.length) {
-        saveLocalState(json.state);
-        setState(json.state);
-        setMsg(`${json.state.paniers.length} paniers prêts.`);
+        announce(json.state);
         return;
       }
       setMsg("Serveur bloqué par 1xBet. Scan depuis le téléphone…");
-      const scan = await clientScrape(params, (m) => setMsg(m));
+      const scan = await clientScrape(params, (m) => setMsg(m), scanDays);
       if (!scan.legs.length) {
         setError(
           scan.error ??
@@ -116,9 +114,10 @@ export function PaniersDesk() {
         );
         return;
       }
-      const paniers = buildPaniers(scan.legs, params);
+      const paniers = buildPaniers(scan.legs, params, daysKey(scanDays));
       const local: XbetState = {
-        day: new Date().toISOString().slice(0, 10),
+        day: daysKey(scanDays),
+        days: scanDays,
         scannedAt: new Date().toISOString(),
         host: scan.host,
         pool: scan.legs.length,
@@ -126,22 +125,34 @@ export function PaniersDesk() {
         error: null,
       };
       saveLocalState(local);
-      setState(local);
+      announce(local);
       try {
         await fetch("/api/xbet/ingest", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ legs: scan.legs, host: scan.host, params }),
+          body: JSON.stringify({ legs: scan.legs, host: scan.host, params, days: scanDays }),
         });
       } catch {
         /* local suffit */
       }
-      setMsg(`${paniers.length} paniers · ${scan.legs.length} matchs`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Scan interrompu");
     } finally {
       setBusy(false);
     }
+  }
+
+  function announce(next: XbetState) {
+    touchedRef.current = false;
+    setOpen(null);
+    saveLocalState(next);
+    setState(next);
+    const used = next.paniers.reduce((a, p) => a + p.legs.length, 0);
+    setMsg(
+      next.paniers.length
+        ? `${next.paniers.length} panier${next.paniers.length > 1 ? "s" : ""} ≥ ${oddsFr(params.minProduct)} · ${used}/${next.pool} matchs utilisés`
+        : "Aucun panier — pas assez de matchs.",
+    );
   }
 
   async function drop(id: string) {
@@ -168,15 +179,16 @@ export function PaniersDesk() {
   return (
     <div className="space-y-4">
       <div>
-        <p className="text-[11px] uppercase tracking-[0.28em] text-lime">Aujourd&apos;hui</p>
+        <p className="text-[11px] uppercase tracking-[0.28em] text-lime">{daysLabel(scanDays)}</p>
         <h1 className="mt-1 font-display text-3xl font-semibold">Tes combinés 1,01</h1>
         <p className="mt-2 text-xs text-mist">
-          {state.host ? new URL(state.host).hostname : "1xBet"}
+          <span className="text-paper">{keyLabel(state.day)}</span>
+          {state.host ? ` · ${new URL(state.host).hostname}` : ""}
           {state.scannedAt ? ` · scanné ${fmtKick(state.scannedAt)}` : ""} · {state.pool} matchs en bande
         </p>
       </div>
 
-      {/* ── Scanner (fusionné ici, plus d'onglet séparé) ── */}
+      {/* ── Scan (les réglages sont dans le ☰ en haut à gauche) ── */}
       <div className="space-y-3 rounded-3xl border border-white/10 bg-ink-800/50 p-4">
         <button
           type="button"
@@ -188,77 +200,27 @@ export function PaniersDesk() {
           {busy ? "Scan en cours…" : "Scanner 1xBet"}
         </button>
         <p className="text-center text-xs text-mist">{msg}</p>
+        <p className="text-center text-[11px] text-mist/80">
+          Cible : <span className="text-paper">{daysLabel(scanDays)}</span> — change avec le calendrier en haut à
+          droite (1 clic = date, 2 clics = plage).
+        </p>
         {error && (
           <p className="rounded-xl border border-live/30 bg-live/10 px-3 py-2 text-xs text-live">{error}</p>
         )}
-        <button
-          type="button"
-          onClick={() => setShowParams((v) => !v)}
-          className="mx-auto flex items-center gap-1.5 text-[11px] text-mist"
-        >
-          <Settings2 size={12} /> Réglages du scan
-        </button>
-        {showParams && (
-          <div className="grid grid-cols-2 gap-3">
-            <label className="text-xs text-mist">
-              Cote min
-              <input
-                className="field mt-1"
-                type="number"
-                step="0.001"
-                min={1}
-                max={1.05}
-                value={params.oddMin}
-                onChange={(e) => patch({ oddMin: Number(e.target.value) })}
-              />
-            </label>
-            <label className="text-xs text-mist">
-              Cote max
-              <input
-                className="field mt-1"
-                type="number"
-                step="0.001"
-                min={1}
-                max={1.05}
-                value={params.oddMax}
-                onChange={(e) => patch({ oddMax: Number(e.target.value) })}
-              />
-            </label>
-            <label className="text-xs text-mist">
-              Sélections / panier
-              <input
-                className="field mt-1"
-                type="number"
-                min={1}
-                max={50}
-                value={params.maxLegs}
-                onChange={(e) => patch({ maxLegs: Math.min(50, Number(e.target.value) || 50) })}
-              />
-            </label>
-            <label className="text-xs text-mist">
-              Paniers / jour
-              <input
-                className="field mt-1"
-                type="number"
-                min={1}
-                max={8}
-                value={params.maxPaniers}
-                onChange={(e) => patch({ maxPaniers: Number(e.target.value) || 5 })}
-              />
-            </label>
-          </div>
-        )}
         <p className="text-[11px] leading-relaxed text-mist">
-          Lit tous les marchés de chaque match <span className="text-paper">pas encore commencé</span> (jamais
-          en live), garde la cote la plus proche de 1,01. 50 × 1,01 ≈ <span className="text-lime">1,64</span>.
+          Chaque panier vise <span className="text-lime">{oddsFr(params.minProduct)}</span> de cote totale minimum —
+          sinon un seul panier regroupe tout. {params.maxLegs} sélections max (plafond 1xBet). Règles &amp; réglages :
+          ☰ en haut à gauche.
         </p>
       </div>
 
       {/* ── État + purge des matchs commencés ── */}
       <div className="flex items-center justify-between gap-3 rounded-2xl border border-white/8 bg-ink-800/40 px-4 py-3">
         <p className="text-xs text-mist">
-          <span className="text-paper">{state.paniers.length} / 5 paniers</span> · un match commence → son panier
-          saute
+          <span className="text-paper">
+            {state.paniers.length} panier{state.paniers.length > 1 ? "s" : ""}
+          </span>{" "}
+          · un match commence → son panier saute
         </p>
         <button
           type="button"
@@ -280,7 +242,10 @@ export function PaniersDesk() {
           <article key={b.id} className="overflow-hidden rounded-3xl border border-white/10 bg-ink-800/60">
             <button
               type="button"
-              onClick={() => setOpen(expanded ? null : b.id)}
+              onClick={() => {
+                touchedRef.current = true;
+                setOpen(expanded ? null : b.id);
+              }}
               className="flex w-full items-start justify-between gap-3 px-4 py-4 text-left"
             >
               <div>

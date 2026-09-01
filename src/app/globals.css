@@ -102,3 +102,16 @@ body::before {
 .marquee-track {
   animation: marquee 42s linear infinite;
 }
+
+@keyframes drawer-in {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+.drawer-panel {
+  animation: drawer-in 0.22s ease-out;
+}

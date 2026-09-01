@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { PhoneShell } from "@/components/phone-shell";
+import { ScanConfigProvider } from "@/components/scan-config";
 import "@fontsource/manrope/400.css";
 import "@fontsource/manrope/500.css";
 import "@fontsource/manrope/600.css";
@@ -40,7 +41,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="fr">
       <body className="font-sans antialiased">
-        <PhoneShell>{children}</PhoneShell>
+        <ScanConfigProvider>
+          <PhoneShell>{children}</PhoneShell>
+        </ScanConfigProvider>
       </body>
     </html>
   );

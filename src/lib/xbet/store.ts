@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { ymd } from "../format";
+import { daysKey, normalizeDays } from "./days";
 import { purgeStarted } from "./pack";
 import type { Panier, XbetState } from "./types";
 
@@ -85,7 +86,7 @@ export async function liveState(): Promise<XbetState> {
   const kept = purgeStarted(state.paniers);
   const next: XbetState = {
     ...state,
-    day: today,
+    day: state.day || today,
     paniers: kept,
     error: null,
   };
@@ -94,13 +95,16 @@ export async function liveState(): Promise<XbetState> {
 }
 
 export async function writePaniers(partial: {
+  days?: string[];
   host: string | null;
   pool: number;
   paniers: Panier[];
   error: string | null;
 }) {
+  const days = normalizeDays(partial.days ?? []);
   const next: XbetState = {
-    day: ymd(),
+    day: daysKey(days),
+    days,
     scannedAt: new Date().toISOString(),
     host: partial.host,
     pool: partial.pool,

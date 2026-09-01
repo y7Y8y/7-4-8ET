@@ -65,6 +65,7 @@ export async function browserGet(url: string): Promise<unknown> {
 export async function clientScrape(
   params: ScanParams = SCAN_DEFAULTS,
   onProgress: Progress = () => undefined,
+  days: readonly string[] = [],
 ): Promise<{
   ok: boolean;
   host: string | null;
@@ -85,5 +86,6 @@ export async function clientScrape(
     maxGames: 90,
     concurrency: 4,
     budgetMs: 60_000,
+    days,
   });
 }

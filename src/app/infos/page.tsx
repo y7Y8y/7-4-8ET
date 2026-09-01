@@ -48,8 +48,12 @@ export default function InfosPage() {
             Le bouton vert <span className="text-paper">Scanner 1xBet</span> est directement sur l&apos;accueil, en
             haut. Le scan lit <span className="text-paper">tous les marchés</span> de chaque match{" "}
             <span className="text-paper">pas encore commencé</span> (jamais en live), et en sort les cotes de la
-            bande choisie — la plus proche de 1,01 par match. Réglages (cote min/max, sélections, paniers) sous
-            « Réglages du scan ».
+            bande choisie — la plus proche de 1,01 par match.
+          </p>
+          <p className="mt-2">
+            <span className="text-paper">Choisir le ou les jours</span> : l&apos;icône de calendrier en haut à droite
+            — un clic sur une date, ou deux clics (départ puis arrivée) pour une plage. Les réglages et les règles du
+            scan sont derrière le <span className="text-paper">☰ en haut à gauche</span>.
           </p>
         </li>
         <li className="rounded-2xl border border-white/8 bg-ink-800/40 p-4">
@@ -69,8 +73,12 @@ export default function InfosPage() {
           <p className="mt-1">Uniquement ce que tu retrouves sur 1xBet : 1 / Nul / 2, handicap (+1), plus/moins de buts. Plus de code du style « marché 206 ».</p>
         </li>
         <li className="rounded-2xl border border-white/8 bg-ink-800/40 p-4">
-          <p className="text-paper">50 × 1,01 ≈ 1,64 · 5 paniers / jour</p>
-          <p className="mt-1">Si un match a commencé, le panier saute tout seul.</p>
+          <p className="text-paper">Chaque panier ≥ 1,50 · 50 × 1,01 ≈ 1,64</p>
+          <p className="mt-1">
+            Un panier ne sert à rien s&apos;il n&apos;atteint pas la cote totale visée (1,50 par défaut, réglable
+            dans le ☰) : s&apos;il n&apos;y a pas assez de matchs, un seul panier regroupe tout au lieu d&apos;en
+            empiler plusieurs à 1,05. Et si un match a commencé, le panier saute tout seul.
+          </p>
         </li>
       </ol>
       <p className="text-xs text-mist">
