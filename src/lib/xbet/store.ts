@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { ymd } from "../format";
 import { daysKey, normalizeDays } from "./days";
-import { purgeStarted } from "./pack";
+import { purgeStartedDetailed } from "./pack";
 import type { Panier, XbetState } from "./types";
 
 /**
@@ -80,18 +80,28 @@ export async function saveState(state: XbetState) {
   await persist(state);
 }
 
-export async function liveState(): Promise<XbetState> {
+/**
+ * État courant + purge AU MATCH PRÈS : la jambe commencée saute, le panier
+ * reste jouable avec sa cote recalculée. Les paniers des AUTRES jours ne sont
+ * jamais effacés — seule la purge par coup d'envoi décide.
+ */
+export async function liveState(): Promise<{
+  state: XbetState;
+  purge: { legs: number; paniers: number; reduits: number };
+}> {
   const state = await loadState();
-  const today = ymd();
-  const kept = purgeStarted(state.paniers);
+  const report = purgeStartedDetailed(state.paniers);
   const next: XbetState = {
     ...state,
-    day: state.day || today,
-    paniers: kept,
+    day: state.day || ymd(),
+    paniers: report.paniers,
     error: null,
   };
-  if (kept.length !== state.paniers.length) await saveState(next);
-  return next;
+  if (report.legs > 0 || report.paniers_supprimes > 0) await saveState(next);
+  return {
+    state: next,
+    purge: { legs: report.legs, paniers: report.paniers_supprimes, reduits: report.paniers_reduits },
+  };
 }
 
 export async function writePaniers(partial: {
@@ -102,13 +112,14 @@ export async function writePaniers(partial: {
   error: string | null;
 }) {
   const days = normalizeDays(partial.days ?? []);
+  const report = purgeStartedDetailed(partial.paniers);
   const next: XbetState = {
     day: daysKey(days),
     days,
     scannedAt: new Date().toISOString(),
     host: partial.host,
     pool: partial.pool,
-    paniers: purgeStarted(partial.paniers),
+    paniers: report.paniers,
     error: partial.error,
   };
   await saveState(next);
@@ -116,7 +127,7 @@ export async function writePaniers(partial: {
 }
 
 export async function dropPanier(id: string) {
-  const state = await liveState();
+  const { state } = await liveState();
   state.paniers = state.paniers.filter((p) => p.id !== id);
   await saveState(state);
   return state;

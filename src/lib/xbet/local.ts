@@ -1,5 +1,6 @@
-import { purgeStarted } from "./pack";
+import { purgeStartedDetailed } from "./pack";
 import { normalizeDays } from "./days";
+import { normalizeParams } from "./params";
 import { SCAN_DEFAULTS, type ScanParams, type XbetState } from "./types";
 
 const STATE_KEY = "ninety.xbet.state";
@@ -7,8 +8,9 @@ const PARAMS_KEY = "ninety.xbet.params";
 const DAYS_KEY = "ninety.xbet.days";
 
 /**
- * Les paniers d'AUTRES jours ne sont plus effacés : c'est la purge par coup
- * d'envoi (purgeStarted) qui décide — un panier commence → il saute.
+ * Les paniers d'AUTRES jours ne sont plus effacés : c'est la purge au match
+ * près (purgeStartedDetailed) qui décide — la jambe commencée saute, le reste
+ * du panier reste jouable.
  */
 export function loadLocalState(): XbetState | null {
   if (typeof window === "undefined") return null;
@@ -16,7 +18,7 @@ export function loadLocalState(): XbetState | null {
     const raw = localStorage.getItem(STATE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as XbetState;
-    return { ...parsed, paniers: purgeStarted(parsed.paniers ?? []) };
+    return { ...parsed, paniers: purgeStartedDetailed(parsed.paniers ?? []).paniers };
   } catch {
     return null;
   }
@@ -32,7 +34,7 @@ export function loadParams(): ScanParams {
   try {
     const raw = localStorage.getItem(PARAMS_KEY);
     if (!raw) return SCAN_DEFAULTS;
-    return { ...SCAN_DEFAULTS, ...(JSON.parse(raw) as Partial<ScanParams>) };
+    return normalizeParams(JSON.parse(raw) as Partial<ScanParams>);
   } catch {
     return SCAN_DEFAULTS;
   }

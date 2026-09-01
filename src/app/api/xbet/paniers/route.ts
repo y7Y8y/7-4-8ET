@@ -4,8 +4,8 @@ import { dropPanier, liveState } from "@/lib/xbet/store";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const state = await liveState();
-  return NextResponse.json({ ok: true, state });
+  const { state, purge } = await liveState();
+  return NextResponse.json({ ok: true, state, purge });
 }
 
 export async function DELETE(req: Request) {

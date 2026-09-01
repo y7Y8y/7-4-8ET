@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronDown, Copy, Radar, RefreshCw, Trash2 } from "lucide-react";
 import { fmtKick, odds3, oddsFr, ymd } from "@/lib/format";
-import { buildPaniers, couponText, purgeStarted } from "@/lib/xbet/pack";
+import { buildPaniers, couponText, purgeStartedDetailed } from "@/lib/xbet/pack";
 import { daysKey, daysLabel, keyLabel } from "@/lib/xbet/days";
 import { clientScrape } from "@/lib/xbet/client-scan";
 import { loadLocalState, saveLocalState } from "@/lib/xbet/local";
@@ -34,30 +34,26 @@ export function PaniersDesk() {
 
   const scanDays = days.length ? days : [ymd()];
 
-  /** Recharge l'état + purge les matchs commencés. announce=true → message visible. */
+  /** Recharge l'état + purge AU MATCH PRÈS (la jambe commencée saute, le reste du panier reste). */
   const refresh = useCallback(async (announce: boolean) => {
     try {
       const res = await fetch("/api/xbet/paniers", { cache: "no-store" });
       const json = (await res.json()) as { state?: XbetState };
       if (json.state) {
         const merged = preferNewer(loadLocalState(), json.state);
-        const before = merged.paniers.length;
-        const cleaned = { ...merged, paniers: purgeStarted(merged.paniers) };
-        const removed = before - cleaned.paniers.length;
+        const report = purgeStartedDetailed(merged.paniers);
+        const cleaned = { ...merged, paniers: report.paniers };
         setState(cleaned);
         saveLocalState(cleaned);
         if (announce) {
-          setNote(
-            removed > 0
-              ? `${removed} panier${removed > 1 ? "s" : ""} retiré${removed > 1 ? "s" : ""} — un match a commencé.`
-              : "À jour — aucun match commencé dans tes paniers.",
-          );
+          setNote(purgeNote(report.legs, report.paniers_supprimes, report.paniers_reduits));
         }
       }
     } catch {
       const local = loadLocalState();
       if (local) {
-        const cleaned = { ...local, paniers: purgeStarted(local.paniers) };
+        const report = purgeStartedDetailed(local.paniers);
+        const cleaned = { ...local, paniers: report.paniers };
         setState(cleaned);
         saveLocalState(cleaned);
       }
@@ -75,8 +71,8 @@ export function PaniersDesk() {
   }, [state.paniers, open]);
 
   /** Le scan : lit TOUS les marchés de chaque match pas encore commencé des jours
-   *  choisis, garde la cote dans la bande (la plus proche de 1,01), fabrique des
-   *  paniers qui atteignent CHACUN la cote totale minimale. */
+   *  choisis, garde la cote dans la bande (la plus proche du haut de bande),
+   *  fabrique des paniers qui atteignent CHACUN la cote totale minimale. */
   async function run() {
     setBusy(true);
     setError(null);
@@ -105,7 +101,7 @@ export function PaniersDesk() {
         return;
       }
       setMsg("Serveur bloqué par 1xBet. Scan depuis le téléphone…");
-      const scan = await clientScrape(params, (m) => setMsg(m), scanDays);
+      const scan = await clientScrape({ ...params, days: scanDays }, (m) => setMsg(m));
       if (!scan.legs.length) {
         setError(
           scan.error ??
@@ -114,7 +110,7 @@ export function PaniersDesk() {
         );
         return;
       }
-      const paniers = buildPaniers(scan.legs, params, daysKey(scanDays));
+      const paniers = buildPaniers(scan.legs, scan.params, daysKey(scanDays));
       const local: XbetState = {
         day: daysKey(scanDays),
         days: scanDays,
@@ -130,7 +126,7 @@ export function PaniersDesk() {
         await fetch("/api/xbet/ingest", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ legs: scan.legs, host: scan.host, params, days: scanDays }),
+          body: JSON.stringify({ legs: scan.legs, host: scan.host, params: scan.params, days: scanDays }),
         });
       } catch {
         /* local suffit */
@@ -220,7 +216,7 @@ export function PaniersDesk() {
           <span className="text-paper">
             {state.paniers.length} panier{state.paniers.length > 1 ? "s" : ""}
           </span>{" "}
-          · un match commence → son panier saute
+          · un match commence → sa jambe saute, le reste reste jouable
         </p>
         <button
           type="button"
@@ -306,6 +302,15 @@ export function PaniersDesk() {
       )}
     </div>
   );
+}
+
+function purgeNote(legs: number, supprimes: number, reduits: number): string {
+  if (!legs && !supprimes && !reduits) return "À jour — aucun match commencé dans tes paniers.";
+  const bits: string[] = [];
+  if (legs) bits.push(`${legs} jambe${legs > 1 ? "s" : ""} retirée${legs > 1 ? "s" : ""} (match commencé)`);
+  if (reduits) bits.push(`${reduits} panier${reduits > 1 ? "s" : ""} réduit${reduits > 1 ? "s" : ""}`);
+  if (supprimes) bits.push(`${supprimes} panier${supprimes > 1 ? "s" : ""} supprimé${supprimes > 1 ? "s" : ""}`);
+  return `${bits.join(" · ")} — cotes recalculées.`;
 }
 
 function preferNewer(local: XbetState | null, server: XbetState): XbetState {

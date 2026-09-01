@@ -1,78 +1,103 @@
 import { NextResponse } from "next/server";
 import { buildPaniers } from "@/lib/xbet/pack";
-import { daysKey, normalizeDays } from "@/lib/xbet/days";
+import { daysKey } from "@/lib/xbet/days";
+import { normalizeParams, paramsFromQuery } from "@/lib/xbet/params";
 import { getJsonNative, scrapeXbet } from "@/lib/xbet/scrape";
 import { writePaniers } from "@/lib/xbet/store";
-import { SCAN_DEFAULTS, type ScanParams } from "@/lib/xbet/types";
+import { isStrictBand, type ScanParams, type XbetState } from "@/lib/xbet/types";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
+/**
+ * POST /api/xbet/scan — corps JSON { oddMin, oddMax, minProduct, bufferMin,
+ * maxLegs, maxPaniers, days: ["YYYY-MM-DD"… | "today" | "3d" | "all"] }
+ * GET  /api/xbet/scan — mêmes paramètres en query (?days=3d&minProduct=1.5&dry=1)
+ *
+ * `days` = dates ISO du calendrier (1 clic = date, 2 clics = plage), ou
+ * préréglage. Chaque panier produit atteint `minProduct` (1,50 par défaut) —
+ * sinon un seul panier regroupe tout, jamais de panier « filler ».
+ */
+export async function GET(req: Request) {
+  const q = new URL(req.url).searchParams;
+  const params = paramsFromQuery(q);
+  const save = q.get("dry") === "1" || q.get("save") === "0" ? false : true;
+  return run(params, save);
+}
+
 export async function POST(req: Request) {
-  const { params, days } = await readParams(req);
-  const day = daysKey(days);
+  const params = await readParams(req);
+  return run(params, true);
+}
+
+async function run(params: ScanParams, save: boolean) {
   // Budget interne : répondre AVANT le timeout client (50 s) et le plafond Vercel (60 s).
-  // `days` filtre les candidats sur le(s) jour(s) choisi(s) dans le calendrier.
   const scan = await scrapeXbet(getJsonNative, params, () => undefined, {
     budgetMs: 40_000,
-    days,
   });
+  const meta = {
+    params,
+    strictBand: isStrictBand(params),
+    window: scan.window,
+    saved: false,
+  };
+
   if (!scan.ok) {
     return NextResponse.json({
       ok: false,
       fallback: true,
       error: scan.error,
-      scan: { host: scan.host, events: scan.events, games: scan.games, pool: 0 },
+      ...meta,
+      scan: { host: scan.host, events: scan.events, games: scan.games, pool: 0, saved: false },
+      state: null,
     });
   }
-  const paniers = buildPaniers(scan.legs, params, day);
-  let state;
-  try {
-    state = await writePaniers({
-      days,
-      host: scan.host,
-      pool: scan.legs.length,
-      paniers,
-      error: null,
-    });
-  } catch {
-    // FS indisponible : on renvoie quand même l'état — le téléphone le garde en localStorage.
-    state = {
-      day,
-      days,
-      scannedAt: new Date().toISOString(),
-      host: scan.host,
-      pool: scan.legs.length,
-      paniers,
-      error: null,
-    };
+
+  const paniers = buildPaniers(scan.legs, params, daysKey(params.days));
+  let state: XbetState = {
+    day: daysKey(params.days),
+    days: params.days,
+    scannedAt: new Date().toISOString(),
+    host: scan.host,
+    pool: scan.legs.length,
+    paniers,
+    error: null,
+  };
+  if (save) {
+    try {
+      state = await writePaniers({
+        days: params.days,
+        host: scan.host,
+        pool: scan.legs.length,
+        paniers,
+        error: null,
+      });
+      meta.saved = true;
+    } catch {
+      // FS indisponible : on renvoie quand même l'état — le téléphone le garde en localStorage.
+    }
   }
+
   return NextResponse.json({
     ok: true,
     fallback: false,
     state,
-    scan: { host: scan.host, events: scan.events, games: scan.games, pool: scan.legs.length },
+    ...meta,
+    scan: {
+      host: scan.host,
+      events: scan.events,
+      games: scan.games,
+      pool: scan.legs.length,
+      saved: meta.saved,
+    },
   });
 }
 
-async function readParams(req: Request): Promise<{ params: ScanParams; days: string[] }> {
+async function readParams(req: Request): Promise<ScanParams> {
   try {
-    const body = (await req.json()) as Partial<ScanParams> & { days?: unknown };
-    const params: ScanParams = {
-      oddMin: num(body.oddMin, SCAN_DEFAULTS.oddMin),
-      oddMax: num(body.oddMax, SCAN_DEFAULTS.oddMax),
-      minProduct: Math.max(1.0001, num(body.minProduct, SCAN_DEFAULTS.minProduct)),
-      bufferMin: num(body.bufferMin, SCAN_DEFAULTS.bufferMin),
-      maxLegs: Math.min(50, Math.max(1, Math.round(num(body.maxLegs, SCAN_DEFAULTS.maxLegs)))),
-      maxPaniers: Math.min(8, Math.max(1, Math.round(num(body.maxPaniers, SCAN_DEFAULTS.maxPaniers)))),
-    };
-    return { params, days: normalizeDays(body.days) };
+    const body = (await req.json()) as Record<string, unknown>;
+    return normalizeParams(body);
   } catch {
-    return { params: SCAN_DEFAULTS, days: [] };
+    return normalizeParams(null);
   }
-}
-
-function num(v: unknown, fallback: number) {
-  const n = Number(v);
-  return Number.isFinite(n) ? n : fallback;
 }

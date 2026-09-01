@@ -1,7 +1,8 @@
 import { SPORT_IDS, feedHeaders, feedHosts, lineUrl } from "./hosts";
-import { eventKickoff, isPrematch, legsFromEvent, onePerMatch, parseGame } from "./parse";
+import { eventKickoff, filterBand, isPrematch, legsFromEvent, onePerMatch, parseGame } from "./parse";
+import { normalizeParams, describeDays, inRange } from "./params";
 import { dayWindowsUtc, inDayWindows } from "./days";
-import { SCAN_DEFAULTS, type ScanParams, type XbetLeg } from "./types";
+import type { ScanParams, XbetLeg } from "./types";
 
 export type Progress = (msg: string) => void;
 
@@ -14,6 +15,10 @@ export type ScrapeResult = {
   events: number;
   games: number;
   error: string | null;
+  /** paramètres réellement appliqués (bande jamais élargie) */
+  params: ScanParams;
+  /** fenêtre de jours appliquée */
+  window: { days: string[]; label: string; start: string; end: string | null };
 };
 
 /* ── Schéma du feed BetB2B (endpoints non verrouillés) ── */
@@ -142,24 +147,30 @@ export function leaguesFromTree(sports: SportNode[], maxLeagues = 45) {
 /**
  * Scan complet des paniers, sur les endpoints NON verrouillés du feed :
  *  1. GetSportsZip?top=false  → toutes les ligues qui jouent
- *  2. GetChampZip?champ=LI&top=false → les matchs pas encore commencés de chaque ligue
- *  3. GetGameZip?id           → TOUS les marchés du match → on garde la bande 1,007–1,01
+ *  2. GetChampZip?champ=LI&top=false → les matchs de chaque ligue, filtrés sur
+ *     la ou les JOURNÉES choisies (`params.days` — dates ISO du calendrier)
+ *  3. GetGameZip?id           → TOUS les marchés du match → on garde la bande
+ *     (une cote par match, la plus proche du haut de bande), uniquement sur des
+ *     matchs pas encore commencés (buffer, jamais de live).
  * Budget temps garanti : on renvoie toujours ce qu'on a récolté.
  */
 export async function scrapeXbet(
   getJson: Getter,
-  params: ScanParams = SCAN_DEFAULTS,
+  rawParams?: ScanParams,
   onProgress: Progress = () => undefined,
-  opts: { hosts?: readonly string[]; maxLeagues?: number; maxGames?: number; concurrency?: number; budgetMs?: number; days?: readonly string[] } = {},
+  opts: { hosts?: readonly string[]; maxLeagues?: number; maxGames?: number; concurrency?: number; budgetMs?: number; now?: number } = {},
 ): Promise<ScrapeResult> {
+  const params = normalizeParams(rawParams);
+  const now = opts.now ?? Date.now();
+  // Fenêtres UTC des jours choisis (calendrier) : [] = tout le pré-match.
+  const windows = dayWindowsUtc(params.days);
+  const win = describeDays(params.days, now);
   const need = params.maxPaniers * params.maxLegs;
   const maxLeagues = opts.maxLeagues ?? 45;
-  const maxGames = opts.maxGames ?? 140;
+  // Fenêtre large = plus de matchs à lire : on relève le plafond en conséquence.
+  const maxGames = opts.maxGames ?? (params.days.length > 1 ? 260 : 140);
   const concurrency = opts.concurrency ?? 6;
   const deadline = Date.now() + (opts.budgetMs ?? 45_000);
-  // Fenêtres des jours choisis (calendrier) : sans filtre on garde le comportement
-  // historique (tout pré-match) ; avec un jour ou une plage on NE GARDE que ça.
-  const windows = dayWindowsUtc(opts.days ?? []);
 
   const picked = await pickHostWithTree(getJson, opts.hosts ?? feedHosts(), deadline - 8_000);
   if (!picked) {
@@ -170,18 +181,18 @@ export async function scrapeXbet(
       events: 0,
       games: 0,
       error: "1xBet injoignable (1xbet.ci, 1xbet.com, linebet). Réessaie dans un instant.",
+      params,
+      window: winJson(win),
     };
   }
   const { host, sports } = picked;
   const leagues = leaguesFromTree(sports, maxLeagues);
-  onProgress(`Connecté · ${new URL(host).hostname} · ${leagues.length} ligues actives`);
+  onProgress(`Connecté · ${new URL(host).hostname} · ${leagues.length} ligues · ${win.label.toLowerCase()}`);
 
-  /* 2. Matchs pré-match, ligue par ligue, dans le budget. */
+  /* 2. Matchs pré-match des jours choisis, ligue par ligue, dans le budget. */
   type Cand = { ev: EventZipLike; league: string; sport: string };
   const candidates: Cand[] = [];
   const seen = new Set<number>();
-  const now = Date.now();
-  let leaguesDone = 0;
   let leagueStop = false;
 
   await mapPool(leagues, Math.min(concurrency, 4), async (lg) => {
@@ -192,7 +203,6 @@ export async function scrapeXbet(
     try {
       const json = await getJson(lineUrl(host, "GetChampZip", { champ: lg.li, top: false }));
       const games = parseChampGames(json);
-      leaguesDone += 1;
       for (const g of games) {
         if (!g?.I || seen.has(g.I)) continue;
         const home = (g.O1 ?? "").trim();
@@ -223,8 +233,10 @@ export async function scrapeXbet(
       events: 0,
       games: 0,
       error: windows.length
-        ? `Aucun match pas encore commencé sur ${opts.days?.join(", ")}. Vérifie la date dans le calendrier.`
+        ? `Aucun match pas encore commencé sur « ${win.label} ». Vérifie la ou les dates dans le calendrier.`
         : "Aucun match pas encore commencé pour l'instant. Réessaie plus tard.",
+      params,
+      window: winJson(win),
     };
   }
 
@@ -258,7 +270,9 @@ export async function scrapeXbet(
     }
   });
 
-  const pool = onePerMatch(legs).slice(0, need);
+  // Double filet : bande stricte + jours choisis, même si un parseur s'est trompé.
+  const clean = filterBand(legs, params).filter((l) => inRange(Date.parse(l.kickoff), win));
+  const pool = onePerMatch(clean, params.oddMax).slice(0, need);
   return {
     ok: pool.length > 0,
     host,
@@ -267,6 +281,17 @@ export async function scrapeXbet(
     games,
     error: pool.length
       ? null
-      : `Aucune cote entre ${params.oddMin} et ${params.oddMax} sur les matchs encore ouverts.`,
+      : `Aucune cote entre ${params.oddMin} et ${params.oddMax} sur « ${win.label} ». La bande n'est jamais élargie automatiquement : change-la dans Réglages si tu veux plus de matchs.`,
+    params,
+    window: winJson(win),
+  };
+}
+
+function winJson(win: { days: string[]; label: string; start: number; end: number }) {
+  return {
+    days: win.days,
+    label: win.label,
+    start: new Date(win.start).toISOString(),
+    end: Number.isFinite(win.end) ? new Date(win.end).toISOString() : null,
   };
 }
